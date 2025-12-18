@@ -1,332 +1,217 @@
 """
-Compliance API endpoints - INTERNAL ONLY
+Compliance admin endpoints
 """
 
-import logging
-from decimal import Decimal
+from typing import List
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
 from app.infrastructure.database import get_db
 from app.core.transactions.models import Transaction, TransactionType, TransactionStatus
-from app.core.ledger.models import Operation, OperationType, OperationStatus, LedgerEntry, LedgerEntryType
-from app.core.accounts.models import Account, AccountType
-from app.core.security.models import Role
-from app.schemas.compliance import (
-    ReleaseFundsRequest,
-    ReleaseFundsResponse,
-    RejectDepositRequest,
-    RejectDepositResponse,
-)
-from app.services.fund_services import (
-    release_compliance_funds,
-    reject_deposit,
-    InsufficientBalanceError,
-    ValidationError,
-)
-from app.services.wallet_helpers import get_account_balance
-from app.services.transaction_engine import recompute_transaction_status
-from app.auth.dependencies import require_compliance_or_ops, get_user_id_from_principal
+from app.core.users.models import User
+from app.schemas.compliance import DepositListItem
+from app.auth.dependencies import require_admin_role, get_user_id_from_principal
 from app.auth.oidc import Principal
-from app.utils.metrics import record_compliance_action
-
-logger = logging.getLogger(__name__)
+from app.services.fund_services import release_compliance_funds, reject_deposit
 
 router = APIRouter()
 
 
+class ReleaseFundsRequest(BaseModel):
+    """Release funds request schema"""
+    transaction_id: str = Field(..., description="Transaction UUID")
+    amount: str = Field(..., description="Amount to release")
+    reason: str = Field(..., description="Reason for release")
+
+
+class RejectDepositRequest(BaseModel):
+    """Reject deposit request schema"""
+    transaction_id: str = Field(..., description="Transaction UUID")
+    reason: str = Field(..., description="Reason for rejection")
+
+
+class ComplianceActionResponse(BaseModel):
+    """Compliance action response schema"""
+    transaction_id: str = Field(..., description="Transaction UUID")
+    status: str = Field(..., description="Transaction status after action")
+
+
+@router.get(
+    "/compliance/deposits",
+    response_model=List[DepositListItem],
+    summary="List deposits for compliance review",
+    description="List all DEPOSIT transactions for compliance review. Requires ADMIN role.",
+)
+async def list_deposits(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_admin_role()),
+) -> List[DepositListItem]:
+    """List deposits for compliance review"""
+    transactions = (
+        db.query(Transaction)
+        .join(User, Transaction.user_id == User.id)
+        .filter(Transaction.type == TransactionType.DEPOSIT)
+        .order_by(Transaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    
+    result = []
+    for txn in transactions:
+        user = db.query(User).filter(User.id == txn.user_id).first()
+        # Extract amount from metadata if available
+        amount = "0"
+        currency = "AED"
+        if txn.transaction_metadata:
+            amount = str(txn.transaction_metadata.get("amount", "0"))
+            currency = txn.transaction_metadata.get("currency", "AED")
+        
+        result.append(DepositListItem(
+            transaction_id=str(txn.id),
+            user_id=str(txn.user_id),
+            email=user.email if user else "unknown",
+            amount=amount,
+            currency=currency,
+            status=txn.status.value,
+            created_at=txn.created_at.isoformat() + "Z",
+            compliance_status=txn.status.value if txn.status.value in ["COMPLIANCE_REVIEW", "AVAILABLE"] else None,
+        ))
+    
+    return result
+
+
 @router.post(
     "/compliance/release-funds",
-    response_model=ReleaseFundsResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Release compliance-blocked funds",
-    description="Release funds from BLOCKED to AVAILABLE after compliance review. INTERNAL ONLY. Requires COMPLIANCE or OPS role.",
+    response_model=ComplianceActionResponse,
+    summary="Release funds from compliance review",
+    description="Release funds from WALLET_BLOCKED to WALLET_AVAILABLE after compliance review. Requires ADMIN role.",
 )
 async def release_funds(
     request: ReleaseFundsRequest,
     db: Session = Depends(get_db),
-    principal: Principal = Depends(require_compliance_or_ops),
-) -> ReleaseFundsResponse:
-    """
-    Release funds from COMPLIANCE_REVIEW status to AVAILABLE.
+    principal: Principal = Depends(require_admin_role()),
+) -> ComplianceActionResponse:
+    """Release funds after compliance review"""
+    try:
+        transaction_id = UUID(request.transaction_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid transaction_id format"
+        )
     
-    This endpoint:
-    1. Validates transaction exists and is in correct state
-    2. Validates amount <= blocked balance
-    3. Calls release_compliance_funds() service
-    4. Triggers Transaction Status Engine recompute
-    5. Creates AuditLog entry with reason
-    
-    Access: COMPLIANCE or OPS role only.
-    
-    Validation:
-    - Transaction must exist
-    - Transaction.type must be DEPOSIT
-    - Transaction.status must be COMPLIANCE_REVIEW
-    - Amount must be > 0
-    - Amount must be <= blocked balance for transaction/user
-    """
-    actor_user_id = get_user_id_from_principal(principal)
-    
-    # Load transaction
-    transaction = db.query(Transaction).filter(
-        Transaction.id == request.transaction_id
-    ).first()
-    
+    # Get transaction
+    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if not transaction:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Transaction {request.transaction_id} not found"
+            detail="Transaction not found"
         )
     
-    # Validate transaction type
     if transaction.type != TransactionType.DEPOSIT:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Transaction type must be DEPOSIT, got {transaction.type.value}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transaction is not a deposit"
         )
     
-    # Validate transaction status
-    if transaction.status != TransactionStatus.COMPLIANCE_REVIEW:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Transaction status must be COMPLIANCE_REVIEW, got {transaction.status.value}"
-        )
+    # Get actor user_id
+    actor_user_id = get_user_id_from_principal(principal)
     
-    # Determine currency from transaction operations
-    currency = "AED"  # Default
-    operations = db.query(Operation).filter(
-        Operation.transaction_id == transaction.id
-    ).limit(1).all()
-    
-    if operations:
-        # Get currency from first ledger entry
-        from app.core.ledger.models import LedgerEntry
-        ledger_entry = db.query(LedgerEntry).filter(
-            LedgerEntry.operation_id == operations[0].id
-        ).first()
-        if ledger_entry:
-            currency = ledger_entry.currency
-    
-    # Get blocked account balance for validation
-    blocked_account = db.query(Account).filter(
-        Account.user_id == transaction.user_id,
-        Account.currency == currency,
-        Account.account_type == AccountType.WALLET_BLOCKED,
-    ).first()
-    
-    if not blocked_account:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"No WALLET_BLOCKED account found for user {transaction.user_id} and currency {currency}"
-        )
-    
-    blocked_balance = get_account_balance(db, blocked_account.id)
-    
-    # Validate amount <= blocked balance
-    if request.amount > blocked_balance:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Amount {request.amount} exceeds blocked balance {blocked_balance}"
-        )
-    
+    # Release funds
     try:
-        # Release funds (service handles AuditLog and Transaction Status Engine update)
+        from decimal import Decimal
         operation = release_compliance_funds(
             db=db,
             user_id=transaction.user_id,
-            currency=currency,
-            amount=request.amount,
-            transaction_id=transaction.id,
+            transaction_id=transaction_id,
+            amount=Decimal(request.amount),
+            currency=transaction.transaction_metadata.get("currency", "AED") if transaction.transaction_metadata else "AED",
+            actor_user_id=actor_user_id,
             reason=request.reason,
-            actor_user_id=actor_user_id,  # TODO: Get from authenticated user
         )
         
-        # Recompute transaction status (should be AVAILABLE now)
-        new_status = recompute_transaction_status(
-            db=db,
-            transaction_id=transaction.id,
-        )
+        # Refresh transaction to get updated status
+        db.refresh(transaction)
         
-        # Record metrics
-        record_compliance_action(action="release_funds")
-        
-        logger.info(
-            f"Funds released: transaction_id={transaction.id}, "
-            f"amount={request.amount}, new_status={new_status.value}, "
-            f"actor_user_id={actor_user_id}"
-        )
-        
-        return ReleaseFundsResponse(
+        return ComplianceActionResponse(
             transaction_id=str(transaction.id),
-            status=new_status.value,
-        )
-        
-    except InsufficientBalanceError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
-        )
-    except ValidationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
+            status=transaction.status.value,
         )
     except Exception as e:
-        logger.error(
-            f"Error releasing funds: transaction_id={transaction.id}, error={str(e)}",
-            exc_info=True
-        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing release funds request"
+            detail=f"Error releasing funds: {str(e)}"
         )
 
 
 @router.post(
     "/compliance/reject-deposit",
-    response_model=RejectDepositResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Reject deposit transaction",
-    description="Reject a deposit transaction by reversing it. Moves funds from BLOCKED back to INTERNAL_OMNIBUS. INTERNAL ONLY. Requires COMPLIANCE or OPS role.",
+    response_model=ComplianceActionResponse,
+    summary="Reject deposit",
+    description="Reject a deposit by reversing it. Requires ADMIN role.",
 )
-async def reject_deposit_transaction(
+async def reject_deposit_endpoint(
     request: RejectDepositRequest,
     db: Session = Depends(get_db),
-    principal: Principal = Depends(require_compliance_or_ops),
-) -> RejectDepositResponse:
-    """
-    Reject a deposit transaction and reverse the funds.
+    principal: Principal = Depends(require_admin_role()),
+) -> ComplianceActionResponse:
+    """Reject deposit"""
+    try:
+        transaction_id = UUID(request.transaction_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid transaction_id format"
+        )
     
-    This endpoint:
-    1. Validates transaction exists and is in correct state
-    2. Computes blocked balance for transaction
-    3. Calls reject_deposit() service to reverse funds
-    4. Triggers Transaction Status Engine recompute
-    5. Creates AuditLog entry with reason
-    
-    Access: COMPLIANCE or OPS role only.
-    
-    Validation:
-    - Transaction must exist
-    - Transaction.type must be DEPOSIT
-    - Transaction.status must be COMPLIANCE_REVIEW
-    - Reason is mandatory (audit trail)
-    
-    Flow:
-    - Funds reversed: WALLET_BLOCKED → INTERNAL_OMNIBUS
-    - Status updated: COMPLIANCE_REVIEW → FAILED
-    - Ledger immutability preserved (new reversal entries created)
-    """
-    actor_user_id = get_user_id_from_principal(principal)
-    
-    # Load transaction
-    transaction = db.query(Transaction).filter(
-        Transaction.id == request.transaction_id
-    ).first()
-    
+    # Get transaction
+    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if not transaction:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Transaction {request.transaction_id} not found"
+            detail="Transaction not found"
         )
     
-    # Validate transaction type
     if transaction.type != TransactionType.DEPOSIT:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Transaction type must be DEPOSIT, got {transaction.type.value}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transaction is not a deposit"
         )
     
-    # Validate transaction status
-    if transaction.status != TransactionStatus.COMPLIANCE_REVIEW:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Transaction status must be COMPLIANCE_REVIEW, got {transaction.status.value}"
-        )
+    # Get actor user_id
+    actor_user_id = get_user_id_from_principal(principal)
     
-    # Determine currency and amount from transaction operations
-    currency = "AED"  # Default
-    amount = Decimal('0')
-    
-    # Find the original DEPOSIT_AED operation to get amount
-    deposit_operation = db.query(Operation).filter(
-        Operation.transaction_id == transaction.id,
-        Operation.type == OperationType.DEPOSIT_AED,
-        Operation.status == OperationStatus.COMPLETED,
-    ).first()
-    
-    if not deposit_operation:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="No completed DEPOSIT_AED operation found for this transaction"
-        )
-    
-    # Get the blocked account credit amount from the original deposit
-    blocked_ledger_entry = db.query(LedgerEntry).filter(
-        LedgerEntry.operation_id == deposit_operation.id,
-        LedgerEntry.entry_type == LedgerEntryType.CREDIT,
-    ).first()
-    
-    if not blocked_ledger_entry:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Could not determine deposit amount from ledger entries"
-        )
-    
-    currency = blocked_ledger_entry.currency
-    amount = Decimal(str(blocked_ledger_entry.amount))  # Original credit amount (positive)
-    
+    # Reject deposit
     try:
-        # Reject deposit (service handles reversal, AuditLog, and Transaction Status Engine update)
+        from decimal import Decimal
+        # Extract amount and currency from transaction metadata
+        amount = Decimal(transaction.transaction_metadata.get("amount", "0")) if transaction.transaction_metadata else Decimal("0")
+        currency = transaction.transaction_metadata.get("currency", "AED") if transaction.transaction_metadata else "AED"
+        
         operation = reject_deposit(
             db=db,
-            transaction_id=transaction.id,
+            transaction_id=transaction_id,
             user_id=transaction.user_id,
             currency=currency,
             amount=amount,
+            actor_user_id=actor_user_id,
             reason=request.reason,
-            actor_user_id=actor_user_id,  # TODO: Get from authenticated user
         )
         
-        # Recompute transaction status (should be FAILED now)
-        new_status = recompute_transaction_status(
-            db=db,
-            transaction_id=transaction.id,
-        )
+        # Refresh transaction to get updated status
+        db.refresh(transaction)
         
-        # Record metrics
-        record_compliance_action(action="reject_deposit")
-        
-        logger.info(
-            f"Deposit rejected: transaction_id={transaction.id}, "
-            f"amount={amount}, new_status={new_status.value}, "
-            f"actor_user_id={actor_user_id}, reason={request.reason}"
-        )
-        
-        return RejectDepositResponse(
+        return ComplianceActionResponse(
             transaction_id=str(transaction.id),
-            status=new_status.value,
-        )
-        
-    except InsufficientBalanceError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
-        )
-    except ValidationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
+            status=transaction.status.value,
         )
     except Exception as e:
-        logger.error(
-            f"Error rejecting deposit: transaction_id={transaction.id}, error={str(e)}",
-            exc_info=True
-        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing reject deposit request"
+            detail=f"Error rejecting deposit: {str(e)}"
         )
-

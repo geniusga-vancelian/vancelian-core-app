@@ -23,7 +23,13 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     
     # Development mode (enables DEV-only endpoints)
-    DEV_MODE: bool = False  # Set to True to enable DEV-only endpoints (e.g., /dev/v1/*)
+    # ⚠️ SECURITY: Defaults to False - must be explicitly enabled for development
+    # When DEV_MODE=False:
+    #   - All /dev/v1/* endpoints return HTTP 404 (not found)
+    #   - DEV routers are not loaded/registered
+    #   - Bootstrap endpoints are unreachable
+    # Only set DEV_MODE=True in development/staging environments, NEVER in production
+    DEV_MODE: bool = False
 
     # Database
     DATABASE_URL: str = "postgresql://vancelian:vancelian_password@postgres:5432/vancelian_core"

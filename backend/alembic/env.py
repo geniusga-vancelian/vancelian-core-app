@@ -23,13 +23,18 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import Base and models (all models must be imported for Alembic to detect them)
+# Use models registry to avoid circular imports
 from app.infrastructure.database import Base
-# Import all models to ensure Alembic detects them
-from app.core.users.models import User
-from app.core.accounts.models import Account
-from app.core.transactions.models import Transaction
-from app.core.ledger.models import Operation, LedgerEntry
-from app.core.compliance.models import AuditLog
+
+# Import all models through registry to ensure Alembic detects them
+from app.models import (
+    User,
+    Account,
+    Transaction,
+    Operation,
+    LedgerEntry,
+    AuditLog,
+)
 
 target_metadata = Base.metadata
 

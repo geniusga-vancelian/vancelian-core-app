@@ -152,3 +152,4 @@ def test_deposit_rejection_path(
         assert entry.amount == original_amounts[entry.id], "LedgerEntry immutability violated"
 
 
+

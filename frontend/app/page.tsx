@@ -1,39 +1,137 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { authApi, walletApi, transactionsApi } from '@/lib/api'
 
 export default function Home() {
+  const router = useRouter()
   const [token, setToken] = useState<string | null>(null)
   const [hasToken, setHasToken] = useState(false)
+  const [user, setUser] = useState<any>(null)
+  const [wallet, setWallet] = useState<any>(null)
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const storedToken = sessionStorage.getItem('dev_jwt_token')
     setToken(storedToken)
     setHasToken(!!storedToken)
-  }, [])
+    
+    if (!storedToken) {
+      router.push('/login')
+      return
+    }
+
+    // Fetch user data, wallet, and transactions
+    const fetchData = async () => {
+      try {
+        const [userData, walletData, transactionsData] = await Promise.all([
+          authApi.me(),
+          walletApi.getBalance('AED'),
+          transactionsApi.list(undefined, undefined, 20),
+        ])
+        setUser(userData)
+        setWallet(walletData)
+        setTransactions(transactionsData)
+      } catch (err) {
+        console.error('Failed to fetch data:', err)
+        // If 401, redirect to login
+        if ((err as any).code === 'HTTP_401') {
+          router.push('/login')
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [router])
+
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto p-8">
+        <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
+        <p>Loading...</p>
+      </div>
+    )
+  }
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6">Vancelian Core - Dev Frontend</h1>
+    <div className="max-w-4xl mx-auto p-8">
+      <h1 className="text-3xl font-bold mb-6">Dashboard</h1>
       
-      <div className="bg-white rounded-lg shadow p-6 mb-6">
-        <h2 className="text-xl font-semibold mb-4">Status</h2>
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className={`w-3 h-3 rounded-full ${hasToken ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span>JWT Token: {hasToken ? 'Present' : 'Not set'}</span>
-          </div>
-          <div className="text-sm text-gray-600 mt-4">
-            <p>This is a DEV-ONLY frontend for testing the Vancelian Core API.</p>
-            <p className="mt-2">To get started:</p>
-            <ol className="list-decimal list-inside mt-2 space-y-1 ml-4">
-              <li>Paste a JWT token in the token bar above</li>
-              <li>Navigate to the desired page using the menu</li>
-              <li>Test the E2E flows (deposit → compliance → invest)</li>
-            </ol>
+      {user && (
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4">User Info</h2>
+          <div className="space-y-2">
+            <p><strong>Email:</strong> {user.email}</p>
+            <p><strong>Status:</strong> {user.status}</p>
           </div>
         </div>
-      </div>
+      )}
+
+      {wallet && (
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4">Wallet Balance ({wallet.currency})</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <p className="text-sm text-gray-500">Total</p>
+              <p className="text-2xl font-bold">{wallet.total_balance}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Available</p>
+              <p className="text-2xl font-bold text-green-600">{wallet.available_balance}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Blocked</p>
+              <p className="text-2xl font-bold text-yellow-600">{wallet.blocked_balance}</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Locked</p>
+              <p className="text-2xl font-bold text-blue-600">{wallet.locked_balance}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {transactions.length > 0 && (
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-xl font-semibold mb-4">Latest Transactions</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {transactions.map((txn) => (
+                  <tr key={txn.transaction_id}>
+                    <td className="px-4 py-2 text-sm font-mono">{txn.transaction_id.substring(0, 8)}...</td>
+                    <td className="px-4 py-2 text-sm">{txn.type}</td>
+                    <td className="px-4 py-2 text-sm">
+                      <span className={`px-2 py-1 text-xs rounded-full ${
+                        txn.status === 'AVAILABLE' ? 'bg-green-100 text-green-800' :
+                        txn.status === 'COMPLIANCE_REVIEW' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {txn.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-sm">{txn.amount} {txn.currency}</td>
+                    <td className="px-4 py-2 text-sm">{new Date(txn.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white rounded-lg shadow p-6">
         <h2 className="text-xl font-semibold mb-4">Available Pages</h2>

@@ -1,73 +1,55 @@
 """
-Compliance API request/response schemas
+Compliance API schemas
 """
 
-from decimal import Decimal
-from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+from typing import Optional
+from datetime import datetime
 
 
-class ReleaseFundsRequest(BaseModel):
-    """Request schema for releasing compliance-blocked funds"""
-    transaction_id: UUID = Field(..., description="Transaction UUID")
-    amount: Decimal = Field(..., description="Amount to release (must be <= blocked balance)")
-    reason: str = Field(..., min_length=1, description="Mandatory reason for release (audit trail)")
-
-    @field_validator('amount')
-    @classmethod
-    def validate_amount(cls, v: Decimal) -> Decimal:
-        """Ensure amount is positive"""
-        if v <= 0:
-            raise ValueError("Amount must be greater than 0")
-        return v
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "transaction_id": "123e4567-e89b-12d3-a456-426614174000",
-                "amount": "10000.00",
-                "reason": "AML review completed - no suspicious activity detected",
-            }
-        }
-
-
-class ReleaseFundsResponse(BaseModel):
-    """Response schema for release funds operation"""
+class DepositListItem(BaseModel):
+    """Deposit list item response schema"""
     transaction_id: str = Field(..., description="Transaction UUID")
-    status: str = Field(..., description="New transaction status (should be AVAILABLE)")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "transaction_id": "123e4567-e89b-12d3-a456-426614174000",
-                "status": "AVAILABLE",
-            }
-        }
+    user_id: str = Field(..., description="User UUID")
+    email: str = Field(..., description="User email")
+    amount: str = Field(..., description="Deposit amount")
+    currency: str = Field(..., description="ISO 4217 currency code")
+    status: str = Field(..., description="Transaction status")
+    created_at: str = Field(..., description="ISO 8601 timestamp")
+    compliance_status: Optional[str] = Field(None, description="Compliance review status")
 
 
-class RejectDepositRequest(BaseModel):
-    """Request schema for rejecting a deposit"""
-    transaction_id: UUID = Field(..., description="Transaction UUID")
-    reason: str = Field(..., min_length=1, description="Mandatory reason for rejection (audit trail)")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "transaction_id": "123e4567-e89b-12d3-a456-426614174000",
-                "reason": "Sanctions match / invalid IBAN",
-            }
-        }
+class UserListItem(BaseModel):
+    """User list item response schema"""
+    user_id: str = Field(..., description="User UUID")
+    email: str = Field(..., description="User email")
+    first_name: Optional[str] = Field(None, description="User first name")
+    last_name: Optional[str] = Field(None, description="User last name")
+    status: str = Field(..., description="User status (ACTIVE, SUSPENDED)")
+    created_at: str = Field(..., description="ISO 8601 timestamp")
 
 
-class RejectDepositResponse(BaseModel):
-    """Response schema for reject deposit operation"""
-    transaction_id: str = Field(..., description="Transaction UUID")
-    status: str = Field(..., description="New transaction status (should be FAILED)")
+class UserDetailResponse(BaseModel):
+    """User detail response schema"""
+    user_id: str = Field(..., description="User UUID")
+    email: str = Field(..., description="User email")
+    first_name: Optional[str] = Field(None, description="User first name")
+    last_name: Optional[str] = Field(None, description="User last name")
+    phone: Optional[str] = Field(None, description="User phone")
+    status: str = Field(..., description="User status (ACTIVE, SUSPENDED)")
+    external_subject: Optional[str] = Field(None, description="OIDC external subject")
+    created_at: str = Field(..., description="ISO 8601 timestamp")
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "transaction_id": "123e4567-e89b-12d3-a456-426614174000",
-                "status": "FAILED",
-            }
-        }
+
+class ResolveUserRequest(BaseModel):
+    """Resolve user request schema"""
+    email: Optional[str] = Field(None, description="User email")
+    external_subject: Optional[str] = Field(None, description="OIDC external subject")
+    user_id: Optional[str] = Field(None, description="User UUID")
+
+
+class ResolveUserResponse(BaseModel):
+    """Resolve user response schema"""
+    user_id: str = Field(..., description="User UUID")
+    email: str = Field(..., description="User email")
+    found: bool = Field(..., description="Whether user was found")

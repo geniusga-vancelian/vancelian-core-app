@@ -170,6 +170,108 @@ export const complianceApi = {
 }
 
 /**
+ * Auth API
+ */
+export const authApi = {
+  register: async (data: {
+    email: string
+    password: string
+    first_name?: string
+    last_name?: string
+  }) => {
+    return apiRequest<{
+      user_id: string
+      email: string
+    }>('/api/v1/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+  
+  login: async (data: {
+    email: string
+    password: string
+  }) => {
+    return apiRequest<{
+      access_token: string
+      token_type: string
+      user_id: string
+      email: string
+    }>('/api/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+  
+  me: async () => {
+    return apiRequest<{
+      user_id: string
+      email: string
+      first_name?: string
+      last_name?: string
+      status: string
+    }>('/api/v1/me')
+  },
+}
+
+/**
+ * Admin API
+ */
+export const adminApi = {
+  listUsers: async (limit: number = 50, offset: number = 0) => {
+    return apiRequest<Array<{
+      user_id: string
+      email: string
+      first_name?: string
+      last_name?: string
+      status: string
+      created_at: string
+    }>>(`/admin/v1/users?limit=${limit}&offset=${offset}`)
+  },
+  
+  getUser: async (user_id: string) => {
+    return apiRequest<{
+      user_id: string
+      email: string
+      first_name?: string
+      last_name?: string
+      phone?: string
+      status: string
+      external_subject?: string
+      created_at: string
+    }>(`/admin/v1/users/${user_id}`)
+  },
+  
+  resolveUser: async (data: {
+    email?: string
+    user_id?: string
+    external_subject?: string
+  }) => {
+    return apiRequest<{
+      user_id: string
+      email: string
+      found: boolean
+    }>('/admin/v1/users/resolve', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+  
+  listDeposits: async (limit: number = 50, offset: number = 0) => {
+    return apiRequest<Array<{
+      transaction_id: string
+      user_id: string
+      email: string
+      amount: string
+      currency: string
+      status: string
+      created_at: string
+      compliance_status?: string
+    }>>(`/admin/v1/compliance/deposits?limit=${limit}&offset=${offset}`)
+  },
+}
+
+/**
  * Webhooks API (dev tools)
  */
 export const webhooksApi = {

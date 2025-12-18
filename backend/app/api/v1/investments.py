@@ -103,7 +103,7 @@ async def create_investment(
         user_id=user_id,
         type=TransactionType.INVESTMENT,
         status=TransactionStatus.INITIATED,  # Will be updated to LOCKED by Transaction Status Engine
-        metadata={
+        transaction_metadata={
             "offer_id": str(request.offer_id),
             "currency": request.currency,
             "reason": request.reason,

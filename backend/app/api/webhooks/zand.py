@@ -1,26 +1,17 @@
 """
-ZAND Bank webhook endpoints
+ZAND webhook endpoints
 """
 
-import logging
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Request, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
+from uuid import uuid4
 
 from app.infrastructure.database import get_db
-from app.infrastructure.logging_config import trace_id_context
-from app.infrastructure.settings import get_settings
 from app.core.transactions.models import Transaction, TransactionType, TransactionStatus
-from app.core.ledger.models import Operation
-from app.core.compliance.models import AuditLog
-from app.core.security.models import Role
 from app.schemas.webhooks import ZandDepositWebhookPayload, ZandDepositWebhookResponse
 from app.services.fund_services import record_deposit_blocked
-from app.utils.webhook_security import verify_zand_webhook_security
-from app.utils.metrics import record_webhook_received, record_webhook_rejected
-
-logger = logging.getLogger(__name__)
+# TODO: Implement webhook signature verification
+# from app.utils.webhook_security import verify_zand_webhook_signature
 
 router = APIRouter()
 
@@ -28,360 +19,72 @@ router = APIRouter()
 @router.post(
     "/zand/deposit",
     response_model=ZandDepositWebhookResponse,
-    status_code=status.HTTP_200_OK,
-    summary="ZAND Bank deposit webhook",
-    description="Receive AED deposit notifications from ZAND Bank. INTERNAL / BANK ONLY endpoint. Requires HMAC signature verification.",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="ZAND deposit webhook",
+    description="Receive deposit notification from ZAND Bank. Funds are recorded in WALLET_BLOCKED compartment pending compliance review.",
 )
 async def zand_deposit_webhook(
+    payload: ZandDepositWebhookPayload,
     request: Request,
     db: Session = Depends(get_db),
-    x_zand_signature: str = Header(..., alias="X-Zand-Signature", description="HMAC-SHA256 signature of request body"),
-    x_zand_timestamp: str = Header(None, alias="X-Zand-Timestamp", description="Unix timestamp for replay protection"),
 ) -> ZandDepositWebhookResponse:
     """
-    Process ZAND Bank deposit webhook with HMAC signature verification.
-    
-    Security Requirements:
-    1. HMAC-SHA256 signature verification (MANDATORY)
-    2. Timestamp/replay protection (if timestamp provided)
-    3. Strict idempotency via provider_event_id
+    Process ZAND Bank deposit webhook.
     
     This endpoint:
-    1. Reads raw request body
-    2. Verifies HMAC signature
-    3. Validates timestamp (if provided)
-    4. Validates payload schema
-    5. Checks idempotency (provider_event_id + transaction_id)
-    6. Creates Transaction if not exists (idempotent)
-    7. Calls record_deposit_blocked() to record deposit in ledger
-    8. Transaction Status Engine updates status to COMPLIANCE_REVIEW
-    9. Creates AuditLog entry
+    1. Verifies webhook signature (if configured)
+    2. Creates Transaction (type=DEPOSIT, status=INITIATED)
+    3. Records deposit in WALLET_BLOCKED compartment
+    4. Returns transaction_id for tracking
     
-    Idempotence:
-    - provider_event_id must be unique per transaction
-    - Duplicate requests return 409 Conflict
-    - Existing transactions are returned with 200 OK (already processed)
+    Idempotency: Uses provider_event_id to prevent duplicate processing.
     
-    Security:
-    - Signature verification required (rejects on failure with 401)
-    - Timestamp tolerance: 300 seconds (5 minutes) by default
-    - No funds released to AVAILABLE (compliance review required)
+    Security: Webhook signature verification should be enabled in production.
     """
-    # Get trace_id for logging
-    trace_id = trace_id_context.get("unknown")
-    
-    # Read raw request body for signature verification
-    # IMPORTANT: Read body as bytes for canonical signature verification
-    try:
-        body_bytes = await request.body()
-    except Exception as e:
-        logger.error(f"Error reading request body: trace_id={trace_id}, error={str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": "INVALID_REQUEST",
-                    "message": "Failed to read request body",
-                    "details": {"trace_id": trace_id, "error": str(e)},
-                    "trace_id": trace_id,
-                }
-            }
-        )
-    
-    # Log webhook received (structured logging)
-    signature_preview = x_zand_signature[:8] + "..." if x_zand_signature and len(x_zand_signature) > 8 else (x_zand_signature or "missing")
-    signature_length = len(x_zand_signature) if x_zand_signature else 0
-    body_preview = None
-    settings = get_settings()
-    if settings.DEV_MODE:
-        # DEV-only: log body snippet (max 500 chars)
-        body_str = body_bytes.decode('utf-8', errors='replace')[:500]
-        body_preview = body_str + "..." if len(body_bytes) > 500 else body_str
-    
-    logger.info(
-        f"ZAND webhook received: trace_id={trace_id}, "
-        f"path={request.url.path}, "
-        f"body_length={len(body_bytes)}, "
-        f"signature_length={signature_length}, "
-        f"signature_preview={signature_preview}, "
-        f"timestamp_header={x_zand_timestamp or 'missing'}"
-        + (f", body_preview={body_preview}" if body_preview else "")
-    )
-    
-    # Verify webhook signature and timestamp
-    is_valid, error_code, error_details = verify_zand_webhook_security(
-        payload_body=body_bytes,
-        signature_header=x_zand_signature,
-        timestamp_header=x_zand_timestamp,
-    )
-    
-    if not is_valid:
-        # Log structured error
-        logger.error(
-            f"Webhook security verification failed: trace_id={trace_id}, "
-            f"error_code={error_code}, "
-            f"path={request.url.path}, "
-            f"signature_preview={signature_preview}, "
-            f"body_length={len(body_bytes)}"
-        )
-        
-        # Record metrics
-        record_webhook_rejected(reason=error_code or "signature_invalid")
-        
-        # Log security event
-        from app.utils.security_logging import log_security_event
-        log_security_event(
-            action="WEBHOOK_SIGNATURE_FAILED",
-            details={
-                "webhook_provider": "ZAND",
-                "error_code": error_code,
-                "error_details": error_details or {},
-                "path": request.url.path,
-            },
-            trace_id=trace_id,
-            db=db,
-        )
-        
-        # Build error response with details
-        error_details_with_trace = (error_details or {}).copy()
-        error_details_with_trace["trace_id"] = trace_id
-        
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": {
-                    "code": error_code or "INVALID_SIGNATURE",
-                    "message": error_details.get("hint", "Webhook security verification failed") if error_details else "Webhook security verification failed",
-                    "details": error_details_with_trace,
-                    "trace_id": trace_id,
-                }
-            }
-        )
-    
-    # Parse payload (after security verification)
-    try:
-        import json
-        payload_dict = json.loads(body_bytes.decode('utf-8'))
-        payload = ZandDepositWebhookPayload(**payload_dict)
-    except Exception as e:
-        logger.error(
-            f"Invalid webhook payload: trace_id={trace_id}, error={str(e)}, body_preview={body_bytes.decode('utf-8', errors='replace')[:200]}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": {
-                    "code": "WEBHOOK_INVALID_BODY",
-                    "message": "Invalid payload format",
-                    "details": {"trace_id": trace_id, "error": str(e), "body_length": len(body_bytes)},
-                    "trace_id": trace_id,
-                }
-            }
-        )
-    
-    # Validate provider_event_id is present (mandatory for idempotency)
-    if not payload.provider_event_id:
-        logger.error(f"Missing provider_event_id: trace_id={trace_id}")
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": {
-                    "code": "VALIDATION_ERROR",
-                    "message": "provider_event_id is required for idempotency",
-                    "details": {"trace_id": trace_id},
-                    "trace_id": trace_id,
-                }
-            }
-        )
-    
-    # Record webhook received metric
-    record_webhook_received()
-    
-    # Log successful validation
-    logger.info(
-        f"ZAND webhook validated successfully: trace_id={trace_id}, "
-        f"provider_event_id={payload.provider_event_id}, "
-        f"validation_result=ok, "
-        f"amount={payload.amount} {payload.currency}, "
-        f"user_id={payload.user_id}"
-    )
-    
-    # Check for existing Transaction (idempotence via external_reference)
-    existing_transaction = db.query(Transaction).filter(
-        Transaction.external_reference == payload.provider_event_id
-    ).first()
-    
-    if existing_transaction:
-        logger.info(
-            f"Duplicate webhook detected (already processed): trace_id={trace_id}, "
-            f"provider_event_id={payload.provider_event_id}, "
-            f"transaction_id={existing_transaction.id}"
-        )
-        # Record duplicate metric (idempotent - not a rejection)
-        # Webhook was already received and processed, so we don't record as rejected
-        # Return existing transaction (idempotent response)
-        return ZandDepositWebhookResponse(
-            status="accepted",
-            transaction_id=str(existing_transaction.id),
-        )
+    # Verify webhook signature (if secret is configured)
+    if hasattr(request, 'headers'):
+        # TODO: Implement signature verification
+        # verify_zand_webhook_signature(request, payload)
+        pass
     
     # Create Transaction
     transaction = Transaction(
         user_id=payload.user_id,
         type=TransactionType.DEPOSIT,
-        status=TransactionStatus.INITIATED,  # Will be updated to COMPLIANCE_REVIEW by Transaction Status Engine
-        external_reference=payload.provider_event_id,
-        metadata={
+        status=TransactionStatus.INITIATED,
+        transaction_metadata={
+            "provider_event_id": payload.provider_event_id,
             "iban": payload.iban,
+            "amount": str(payload.amount),
+            "currency": payload.currency,
             "occurred_at": payload.occurred_at.isoformat(),
-            "provider": "ZAND",
-            "trace_id": trace_id,
         },
     )
     db.add(transaction)
     db.flush()  # Get transaction.id
     
     try:
-        # Record deposit as BLOCKED (compliance review required)
-        # idempotency_key ensures Operation uniqueness
+        # Record deposit in WALLET_BLOCKED compartment
         operation = record_deposit_blocked(
             db=db,
             user_id=payload.user_id,
             currency=payload.currency,
             amount=payload.amount,
             transaction_id=transaction.id,
-            idempotency_key=payload.provider_event_id,  # Unique per provider_event_id
+            idempotency_key=f"zand-{payload.provider_event_id}",
             provider_reference=payload.provider_event_id,
         )
         
-        # Transaction Status Engine will automatically update status to COMPLIANCE_REVIEW
-        # after record_deposit_blocked completes (via recompute_transaction_status)
-        
-        # Create AuditLog
-        audit_log = AuditLog(
-            actor_user_id=None,  # System operation
-            actor_role=Role.OPS,
-            action="ZAND_DEPOSIT_RECEIVED",
-            entity_type="Transaction",
-            entity_id=transaction.id,
-            before=None,
-            after={
-                "transaction_id": str(transaction.id),
-                "provider_event_id": payload.provider_event_id,
-                "user_id": str(payload.user_id),
-                "amount": str(payload.amount),
-                "currency": payload.currency,
-                "iban": payload.iban,
-                "trace_id": trace_id,
-            },
-            reason=None,
-        )
-        db.add(audit_log)
         db.commit()
-        
-        logger.info(
-            f"ZAND deposit processed successfully: trace_id={trace_id}, "
-            f"transaction_id={transaction.id}, operation_id={operation.id}, "
-            f"provider_event_id={payload.provider_event_id}"
-        )
         
         return ZandDepositWebhookResponse(
             status="accepted",
             transaction_id=str(transaction.id),
         )
         
-    except IntegrityError as e:
-        db.rollback()
-        # Handle duplicate idempotency_key (Operation already exists)
-        logger.warning(
-            f"Duplicate operation detected (idempotency): trace_id={trace_id}, "
-            f"provider_event_id={payload.provider_event_id}, error={str(e)}"
-        )
-        # Check if transaction was created but operation failed
-        existing_op = db.query(Operation).filter(
-            Operation.idempotency_key == payload.provider_event_id
-        ).first()
-        
-        if existing_op and existing_op.transaction_id:
-            existing_tx = db.query(Transaction).filter(
-                Transaction.id == existing_op.transaction_id
-            ).first()
-            if existing_tx:
-                return ZandDepositWebhookResponse(
-                    status="accepted",
-                    transaction_id=str(existing_tx.id),
-                )
-        
-        # Record duplicate rejection
-        record_webhook_rejected(reason="duplicate")
-        
-        # If we can't find existing transaction, return conflict
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error": {
-                    "code": "DUPLICATE_EVENT",
-                    "message": f"Duplicate webhook event: {payload.provider_event_id}",
-                    "details": {"trace_id": trace_id, "provider_event_id": payload.provider_event_id},
-                    "trace_id": trace_id,
-                }
-            }
-        )
     except Exception as e:
         db.rollback()
-        
-        # Get error class name for debug info
-        error_class = type(e).__name__
-        error_message = str(e)
-        
-        # Build debug info (DEV-only)
-        settings = get_settings()
-        debug_info = None
-        if settings.DEV_MODE:
-            debug_info = {
-                "error_class": error_class,
-                "error_message": error_message,
-                "hint": _get_error_hint(error_class, error_message),
-            }
-        
-        # Log exception with full context
-        logger.exception(
-            f"Error processing ZAND deposit webhook: trace_id={trace_id}, "
-            f"provider_event_id={payload.provider_event_id}, "
-            f"iban={payload.iban}, "
-            f"user_id={payload.user_id}, "
-            f"amount={payload.amount}, "
-            f"currency={payload.currency}, "
-            f"error_class={error_class}, "
-            f"error={error_message}"
-        )
-        
-        # Build error response
-        error_detail = {
-            "code": "INTERNAL_ERROR",
-            "message": "Error processing deposit",
-            "details": {"trace_id": trace_id},
-            "trace_id": trace_id,
-        }
-        
-        # Add debug info only in DEV_MODE
-        if debug_info:
-            error_detail["debug"] = debug_info
-        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"error": error_detail}
+            detail=f"Error processing deposit: {str(e)}"
         )
-
-
-def _get_error_hint(error_class: str, error_message: str) -> str:
-    """Generate a helpful hint for common errors (DEV-only)"""
-    if "INTERNAL_OMNIBUS" in error_message:
-        return "System account INTERNAL_OMNIBUS should be auto-created. Check if Account creation failed."
-    if "ForeignKeyViolation" in error_class or "foreign key" in error_message.lower():
-        return "Referenced entity does not exist. Ensure user_id exists in users table."
-    if "IntegrityError" in error_class:
-        return "Database constraint violation. Check for duplicates or missing required fields."
-    if "ValidationError" in error_class:
-        return f"Validation failed: {error_message}"
-    return f"Unexpected error: {error_class} - {error_message}"

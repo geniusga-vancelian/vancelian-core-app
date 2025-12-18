@@ -108,3 +108,4 @@ Le ledger financier est protégé par:
 7. **Redis**: Sécuriser Redis avec authentification et TLS si accessible depuis l'extérieur
 
 
+

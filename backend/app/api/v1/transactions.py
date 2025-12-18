@@ -5,6 +5,7 @@ Transactions API endpoints - READ-ONLY
 from decimal import Decimal
 from typing import Optional, List
 from uuid import UUID
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -136,13 +137,36 @@ async def get_transactions(
         
         amount = _compute_transaction_amount(db, txn.id, user_id, currency)
         
+        # Normalize datetime to UTC ISO 8601 format with 'Z' suffix
+        # SQLAlchemy returns timezone-aware datetime, convert to UTC
+        if txn.created_at.tzinfo is not None:
+            created_at_utc = txn.created_at.astimezone(timezone.utc)
+            # Format as ISO 8601 and replace timezone offset with Z
+            iso_str = created_at_utc.isoformat()
+            # Replace +00:00 or -00:00 with Z, or remove any timezone offset pattern
+            if iso_str.endswith('+00:00') or iso_str.endswith('-00:00'):
+                created_at_str = iso_str[:-6] + 'Z'
+            elif '+' in iso_str or (iso_str.count('-') >= 3 and len(iso_str) > 19):
+                # Has timezone offset (format: YYYY-MM-DDTHH:MM:SS+HH:MM or -HH:MM)
+                # Remove timezone offset (last 6 chars if +HH:MM or -HH:MM format)
+                if len(iso_str) >= 6 and iso_str[-6] in '+-' and iso_str[-3] == ':':
+                    created_at_str = iso_str[:-6] + 'Z'
+                else:
+                    # Fallback: just add Z
+                    created_at_str = iso_str + 'Z'
+            else:
+                created_at_str = iso_str + 'Z'
+        else:
+            # Naive datetime, assume UTC
+            created_at_str = txn.created_at.isoformat() + "Z"
+        
         result.append(TransactionListItem(
             transaction_id=str(txn.id),
             type=txn.type.value,
             status=txn.status.value,
             amount=str(amount),
             currency=currency,
-            created_at=txn.created_at.isoformat() + "Z",
+            created_at=created_at_str,
         ))
     
     return result

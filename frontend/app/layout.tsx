@@ -25,8 +25,9 @@ export default function RootLayout({
             <a href="/wallet" className="text-blue-600 hover:text-blue-800">Wallet</a>
             <a href="/transactions" className="text-blue-600 hover:text-blue-800">Transactions</a>
             <a href="/invest" className="text-blue-600 hover:text-blue-800">Invest</a>
-            <a href="/admin/compliance" className="text-blue-600 hover:text-blue-800">Admin</a>
-            <a href="/tools/zand-webhook" className="text-blue-600 hover:text-blue-800">ZAND Webhook</a>
+            <a href="/admin/users" className="text-blue-600 hover:text-blue-800">Admin Users</a>
+            <a href="/admin/compliance" className="text-blue-600 hover:text-blue-800">Compliance</a>
+            <a href="/admin/tools/zand-webhook" className="text-blue-600 hover:text-blue-800">ZAND Webhook</a>
           </div>
         </nav>
         <main className="max-w-7xl mx-auto px-4 py-8">

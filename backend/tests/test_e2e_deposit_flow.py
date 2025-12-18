@@ -234,3 +234,4 @@ def test_ledger_entry_immutability_verification(db_session: Session, test_user, 
     assert ledger_entry.amount == original_amount
 
 
+

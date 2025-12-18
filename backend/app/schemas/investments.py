@@ -53,3 +53,4 @@ class CreateInvestmentResponse(BaseModel):
         }
 
 
+
