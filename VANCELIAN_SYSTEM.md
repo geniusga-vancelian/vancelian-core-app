@@ -78,6 +78,9 @@ app/
 ├── infrastructure/      # DB, Redis, email, providers
 ├── schemas/             # Pydantic
 └── main.py
+```
+
+---
 
 ## 4. 💰 Modèle financier & Ledger (CŒUR DU SYSTÈME)
 
