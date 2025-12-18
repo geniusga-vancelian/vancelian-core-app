@@ -198,11 +198,24 @@ cd infra && docker compose exec backend /bin/bash
 
 ## Variables d'environnement
 
+### Backend
+
 Voir `backend/.env.example` pour la liste complète des variables.
 
 Variables principales:
 - `DATABASE_URL`: URL de connexion PostgreSQL
 - `REDIS_URL`: URL de connexion Redis
 - `SECRET_KEY`: Clé secrète (changez en production!)
-- `ALLOWED_ORIGINS`: Origines CORS autorisées (séparées par des virgules)
+- `ALLOWED_ORIGINS`: Origines CORS autorisées (séparées par des virgules, par défaut: `http://localhost:3000,http://127.0.0.1:3000`)
 - `LOG_LEVEL`: Niveau de log (DEBUG, INFO, WARNING, ERROR)
+
+### Frontend
+
+Créer un fichier `frontend/.env.local` avec:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_ZAND_WEBHOOK_SECRET=dev_secret_placeholder
+```
+
+**Note**: `NEXT_PUBLIC_*` variables sont exposées au navigateur. Ne jamais y mettre de secrets de production.

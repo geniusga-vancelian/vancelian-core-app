@@ -149,3 +149,4 @@ cd backend && alembic upgrade head
 
 **Status**: ✅ Account extension complete - Ready for migration generation and testing.
 
+

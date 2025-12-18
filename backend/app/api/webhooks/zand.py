@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.infrastructure.database import get_db
 from app.infrastructure.logging_config import trace_id_context
+from app.infrastructure.settings import get_settings
 from app.core.transactions.models import Transaction, TransactionType, TransactionStatus
 from app.core.ledger.models import Operation
 from app.core.compliance.models import AuditLog
@@ -70,6 +71,7 @@ async def zand_deposit_webhook(
     trace_id = trace_id_context.get("unknown")
     
     # Read raw request body for signature verification
+    # IMPORTANT: Read body as bytes for canonical signature verification
     try:
         body_bytes = await request.body()
     except Exception as e:
@@ -80,28 +82,51 @@ async def zand_deposit_webhook(
                 "error": {
                     "code": "INVALID_REQUEST",
                     "message": "Failed to read request body",
-                    "details": {"trace_id": trace_id},
+                    "details": {"trace_id": trace_id, "error": str(e)},
                     "trace_id": trace_id,
                 }
             }
         )
     
+    # Log webhook received (structured logging)
+    signature_preview = x_zand_signature[:8] + "..." if x_zand_signature and len(x_zand_signature) > 8 else (x_zand_signature or "missing")
+    signature_length = len(x_zand_signature) if x_zand_signature else 0
+    body_preview = None
+    settings = get_settings()
+    if settings.DEV_MODE:
+        # DEV-only: log body snippet (max 500 chars)
+        body_str = body_bytes.decode('utf-8', errors='replace')[:500]
+        body_preview = body_str + "..." if len(body_bytes) > 500 else body_str
+    
+    logger.info(
+        f"ZAND webhook received: trace_id={trace_id}, "
+        f"path={request.url.path}, "
+        f"body_length={len(body_bytes)}, "
+        f"signature_length={signature_length}, "
+        f"signature_preview={signature_preview}, "
+        f"timestamp_header={x_zand_timestamp or 'missing'}"
+        + (f", body_preview={body_preview}" if body_preview else "")
+    )
+    
     # Verify webhook signature and timestamp
-    is_valid, error_message = verify_zand_webhook_security(
+    is_valid, error_code, error_details = verify_zand_webhook_security(
         payload_body=body_bytes,
         signature_header=x_zand_signature,
         timestamp_header=x_zand_timestamp,
     )
     
     if not is_valid:
+        # Log structured error
         logger.error(
             f"Webhook security verification failed: trace_id={trace_id}, "
-            f"reason={error_message}, signature_header={x_zand_signature[:16] if x_zand_signature else None}..."
+            f"error_code={error_code}, "
+            f"path={request.url.path}, "
+            f"signature_preview={signature_preview}, "
+            f"body_length={len(body_bytes)}"
         )
         
         # Record metrics
-        reason = error_message or "signature_invalid"
-        record_webhook_rejected(reason=reason)
+        record_webhook_rejected(reason=error_code or "signature_invalid")
         
         # Log security event
         from app.utils.security_logging import log_security_event
@@ -109,20 +134,25 @@ async def zand_deposit_webhook(
             action="WEBHOOK_SIGNATURE_FAILED",
             details={
                 "webhook_provider": "ZAND",
-                "reason": error_message,
+                "error_code": error_code,
+                "error_details": error_details or {},
                 "path": request.url.path,
             },
             trace_id=trace_id,
             db=db,
         )
         
+        # Build error response with details
+        error_details_with_trace = (error_details or {}).copy()
+        error_details_with_trace["trace_id"] = trace_id
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
                 "error": {
-                    "code": "INVALID_SIGNATURE",
-                    "message": error_message or "Webhook signature verification failed",
-                    "details": {"trace_id": trace_id},
+                    "code": error_code or "INVALID_SIGNATURE",
+                    "message": error_details.get("hint", "Webhook security verification failed") if error_details else "Webhook security verification failed",
+                    "details": error_details_with_trace,
                     "trace_id": trace_id,
                 }
             }
@@ -135,15 +165,15 @@ async def zand_deposit_webhook(
         payload = ZandDepositWebhookPayload(**payload_dict)
     except Exception as e:
         logger.error(
-            f"Invalid webhook payload: trace_id={trace_id}, error={str(e)}"
+            f"Invalid webhook payload: trace_id={trace_id}, error={str(e)}, body_preview={body_bytes.decode('utf-8', errors='replace')[:200]}"
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "error": {
-                    "code": "VALIDATION_ERROR",
+                    "code": "WEBHOOK_INVALID_BODY",
                     "message": "Invalid payload format",
-                    "details": {"trace_id": trace_id, "error": str(e)},
+                    "details": {"trace_id": trace_id, "error": str(e), "body_length": len(body_bytes)},
                     "trace_id": trace_id,
                 }
             }
@@ -167,10 +197,13 @@ async def zand_deposit_webhook(
     # Record webhook received metric
     record_webhook_received()
     
+    # Log successful validation
     logger.info(
-        f"ZAND webhook received: trace_id={trace_id}, provider_event_id={payload.provider_event_id}, "
-        f"amount={payload.amount} {payload.currency}, user_id={payload.user_id}, "
-        f"signature_verified=True"
+        f"ZAND webhook validated successfully: trace_id={trace_id}, "
+        f"provider_event_id={payload.provider_event_id}, "
+        f"validation_result=ok, "
+        f"amount={payload.amount} {payload.currency}, "
+        f"user_id={payload.user_id}"
     )
     
     # Check for existing Transaction (idempotence via external_reference)
@@ -296,19 +329,59 @@ async def zand_deposit_webhook(
         )
     except Exception as e:
         db.rollback()
-        logger.error(
+        
+        # Get error class name for debug info
+        error_class = type(e).__name__
+        error_message = str(e)
+        
+        # Build debug info (DEV-only)
+        settings = get_settings()
+        debug_info = None
+        if settings.DEV_MODE:
+            debug_info = {
+                "error_class": error_class,
+                "error_message": error_message,
+                "hint": _get_error_hint(error_class, error_message),
+            }
+        
+        # Log exception with full context
+        logger.exception(
             f"Error processing ZAND deposit webhook: trace_id={trace_id}, "
-            f"provider_event_id={payload.provider_event_id}, error={str(e)}",
-            exc_info=True
+            f"provider_event_id={payload.provider_event_id}, "
+            f"iban={payload.iban}, "
+            f"user_id={payload.user_id}, "
+            f"amount={payload.amount}, "
+            f"currency={payload.currency}, "
+            f"error_class={error_class}, "
+            f"error={error_message}"
         )
+        
+        # Build error response
+        error_detail = {
+            "code": "INTERNAL_ERROR",
+            "message": "Error processing deposit",
+            "details": {"trace_id": trace_id},
+            "trace_id": trace_id,
+        }
+        
+        # Add debug info only in DEV_MODE
+        if debug_info:
+            error_detail["debug"] = debug_info
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Error processing deposit",
-                    "details": {"trace_id": trace_id},
-                    "trace_id": trace_id,
-                }
-            }
+            detail={"error": error_detail}
         )
+
+
+def _get_error_hint(error_class: str, error_message: str) -> str:
+    """Generate a helpful hint for common errors (DEV-only)"""
+    if "INTERNAL_OMNIBUS" in error_message:
+        return "System account INTERNAL_OMNIBUS should be auto-created. Check if Account creation failed."
+    if "ForeignKeyViolation" in error_class or "foreign key" in error_message.lower():
+        return "Referenced entity does not exist. Ensure user_id exists in users table."
+    if "IntegrityError" in error_class:
+        return "Database constraint violation. Check for duplicates or missing required fields."
+    if "ValidationError" in error_class:
+        return f"Validation failed: {error_message}"
+    return f"Unexpected error: {error_class} - {error_message}"

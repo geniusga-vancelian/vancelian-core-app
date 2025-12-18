@@ -13,3 +13,4 @@ Zitadel OIDC integration - placeholder
 # - validate_token(token: str) -> UserInfo
 # - get_user_roles(token: str) -> List[Role]
 
+

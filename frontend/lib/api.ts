@@ -3,7 +3,7 @@
  * DEV-ONLY: No production error handling or retries
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
 
 export interface ApiError {
   code: string
@@ -42,28 +42,43 @@ async function apiRequest<T>(
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
-
-  const contentType = response.headers.get('content-type')
-  const isJson = contentType?.includes('application/json')
+  const url = `${API_BASE_URL}${endpoint}`
   
-  const data = isJson ? await response.json() : await response.text()
-  const traceId = response.headers.get('X-Trace-ID')
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    })
 
-  if (!response.ok) {
-    const error: ApiError = {
-      code: isJson && data.error?.code ? data.error.code : `HTTP_${response.status}`,
-      message: isJson && data.error?.message ? data.error.message : data || response.statusText,
-      details: isJson && data.error?.details ? data.error.details : undefined,
-      trace_id: traceId || (isJson && data.error?.trace_id ? data.error.trace_id : undefined),
+    const contentType = response.headers.get('content-type')
+    const isJson = contentType?.includes('application/json')
+    
+    const data = isJson ? await response.json() : await response.text()
+    const traceId = response.headers.get('X-Trace-ID')
+
+    if (!response.ok) {
+      const error: ApiError = {
+        code: isJson && data.error?.code ? data.error.code : `HTTP_${response.status}`,
+        message: isJson && data.error?.message ? data.error.message : data || response.statusText,
+        details: isJson && data.error?.details ? data.error.details : undefined,
+        trace_id: traceId || (isJson && data.error?.trace_id ? data.error.trace_id : undefined),
+      }
+      throw error
+    }
+
+    return data as T
+  } catch (error: any) {
+    // Enhanced error logging for network/CORS issues
+    if (error instanceof TypeError && error.message === 'Failed to fetch') {
+      console.error('[API] Network error - Failed to fetch', {
+        url,
+        baseUrl: API_BASE_URL,
+        endpoint,
+        hint: 'Likely CORS issue or backend is down. Check: 1) Backend is running on http://localhost:8000, 2) CORS_ALLOW_ORIGINS includes http://localhost:3000, 3) Browser console for CORS errors'
+      })
     }
     throw error
   }
-
-  return data as T
 }
 
 /**
@@ -198,4 +213,5 @@ export const webhooksApi = {
     }
   },
 }
+
 

@@ -27,7 +27,7 @@ router = APIRouter()
 async def get_wallet(
     currency: str = Query(default="AED", description="ISO 4217 currency code"),
     db: Session = Depends(get_db),
-    principal: Principal = Depends(require_user_role),
+    principal: Principal = Depends(require_user_role()),
 ) -> WalletBalanceResponse:
     """
     Get wallet balances for all compartments.

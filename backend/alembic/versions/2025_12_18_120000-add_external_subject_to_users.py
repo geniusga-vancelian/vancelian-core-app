@@ -52,3 +52,4 @@ def downgrade() -> None:
     # Drop column
     op.drop_column('users', 'external_subject')
 
+

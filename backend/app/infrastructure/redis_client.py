@@ -24,3 +24,4 @@ def ping_redis() -> bool:
     except Exception:
         return False
 
+

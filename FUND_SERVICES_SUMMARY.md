@@ -150,3 +150,4 @@ balances = get_wallet_balances(db, user.id, "AED")
 
 **Status**: ✅ Fund services implementation complete - Internal services ready for use by Transaction sagas.
 
+

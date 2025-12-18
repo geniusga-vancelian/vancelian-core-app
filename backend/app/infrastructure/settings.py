@@ -3,7 +3,8 @@ Application settings using pydantic-settings
 """
 
 from functools import lru_cache
-from typing import List
+from typing import List, Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,9 @@ class Settings(BaseSettings):
     # Environment (local, staging, prod)
     ENV: str = "local"
     LOG_LEVEL: str = "INFO"
+    
+    # Development mode (enables DEV-only endpoints)
+    DEV_MODE: bool = False  # Set to True to enable DEV-only endpoints (e.g., /dev/v1/*)
 
     # Database
     DATABASE_URL: str = "postgresql://vancelian:vancelian_password@postgres:5432/vancelian_core"
@@ -54,19 +58,89 @@ class Settings(BaseSettings):
     OIDC_REQUIRED_SCOPES: str = ""  # Optional: required scopes (comma-separated)
     OIDC_CLOCK_SKEW_SECONDS: int = 60  # Clock skew tolerance for token validation (default: 60 seconds)
     OIDC_ROLE_CLAIM_PATHS: str = "realm_access.roles,resource_access.{audience}.roles,roles"  # Comma-separated paths to extract roles from JWT claims
+    
+    # JWT Symmetric Key (for HS256 development mode)
+    JWT_SECRET: str = ""  # Secret key for HS256 JWT signing/verification (dev only)
+    JWT_ALGORITHM: str = "HS256"  # JWT algorithm when using symmetric key (default: HS256)
 
-    # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001"
+    # CORS Configuration
+    CORS_ENABLED: bool = True  # Enable CORS middleware (dev default)
+    
+    # CORS settings - can be strings (comma-separated) or lists
+    # Lists are preferred, but strings from env vars are auto-parsed
+    CORS_ALLOW_ORIGINS: Union[str, List[str]] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ]
+    CORS_ALLOW_METHODS: Union[str, List[str]] = [
+        "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
+    ]
+    CORS_ALLOW_HEADERS: Union[str, List[str]] = [
+        "Authorization",
+        "Content-Type",
+        "Idempotency-Key",
+        "X-Request-Id",
+        "Accept",
+        "Origin",
+        # Webhook-related headers (required for DEV frontend simulator)
+        "X-Webhook-Signature",
+        "X-Webhook-Timestamp",
+        "X-Zand-Signature",
+        "X-Zand-Timestamp",
+    ]
+    CORS_ALLOW_CREDENTIALS: bool = True  # Allow credentials in CORS requests
+    
+    # Legacy: ALLOWED_ORIGINS (for backward compatibility)
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
 
     # API Configuration
     API_V1_PREFIX: str = "/api/v1"
     ADMIN_V1_PREFIX: str = "/admin/v1"
     WEBHOOKS_V1_PREFIX: str = "/webhooks/v1"
 
+    @field_validator('CORS_ALLOW_ORIGINS', mode='before')
+    @classmethod
+    def parse_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        """Parse CORS_ALLOW_ORIGINS from string (comma-separated) or list"""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v if isinstance(v, list) else []
+    
+    @field_validator('CORS_ALLOW_METHODS', mode='before')
+    @classmethod
+    def parse_cors_methods(cls, v: Union[str, List[str]]) -> List[str]:
+        """Parse CORS_ALLOW_METHODS from string (comma-separated) or list"""
+        if isinstance(v, str):
+            return [method.strip() for method in v.split(",") if method.strip()]
+        return v if isinstance(v, list) else []
+    
+    @field_validator('CORS_ALLOW_HEADERS', mode='before')
+    @classmethod
+    def parse_cors_headers(cls, v: Union[str, List[str]]) -> List[str]:
+        """Parse CORS_ALLOW_HEADERS from string (comma-separated) or list"""
+        if isinstance(v, str):
+            return [header.strip() for header in v.split(",") if header.strip()]
+        return v if isinstance(v, list) else []
+
+    @property
+    def cors_allow_origins_list(self) -> List[str]:
+        """Get CORS_ALLOW_ORIGINS as a list (already parsed by validator)"""
+        return self.CORS_ALLOW_ORIGINS if isinstance(self.CORS_ALLOW_ORIGINS, list) else []
+    
+    @property
+    def cors_allow_methods_list(self) -> List[str]:
+        """Get CORS_ALLOW_METHODS as a list (already parsed by validator)"""
+        return self.CORS_ALLOW_METHODS if isinstance(self.CORS_ALLOW_METHODS, list) else []
+    
+    @property
+    def cors_allow_headers_list(self) -> List[str]:
+        """Get CORS_ALLOW_HEADERS as a list (already parsed by validator)"""
+        return self.CORS_ALLOW_HEADERS if isinstance(self.CORS_ALLOW_HEADERS, list) else []
+    
     @property
     def allowed_origins_list(self) -> List[str]:
-        """Parse ALLOWED_ORIGINS into a list"""
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+        """Parse ALLOWED_ORIGINS into a list (backward compatibility)"""
+        return self.cors_allow_origins_list
 
     @property
     def is_development(self) -> bool:

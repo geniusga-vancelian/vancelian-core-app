@@ -4,7 +4,7 @@ Fund movement services - Move funds between wallet compartments using Operations
 
 from decimal import Decimal
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -64,18 +64,22 @@ def record_deposit_blocked(
     blocked_account_id = wallet_accounts[AccountType.WALLET_BLOCKED.value]
     
     # Get or create INTERNAL_OMNIBUS account (system-wide, not user-specific)
-    # Note: INTERNAL_OMNIBUS accounts should be provisioned separately at system setup
-    # For now, we require it to exist - in production, this would be managed by system provisioning
+    # Idempotent: create if not exists (DEV-friendly, safe in prod too)
     omnibus_account = db.query(Account).filter(
         Account.account_type == AccountType.INTERNAL_OMNIBUS,
         Account.currency == currency,
     ).first()
     
     if not omnibus_account:
-        raise ValidationError(
-            f"INTERNAL_OMNIBUS account for {currency} does not exist. "
-            "System accounts must be provisioned separately."
+        # Create INTERNAL_OMNIBUS account if it doesn't exist (idempotent)
+        omnibus_account = Account(
+            id=uuid4(),
+            user_id=None,  # System account (no user)
+            currency=currency,
+            account_type=AccountType.INTERNAL_OMNIBUS,
         )
+        db.add(omnibus_account)
+        db.flush()  # Get account.id
     
     omnibus_account_id = omnibus_account.id
     
@@ -413,17 +417,22 @@ def reject_deposit(
     wallet_accounts = ensure_wallet_accounts(db, user_id, currency)
     blocked_account_id = wallet_accounts[AccountType.WALLET_BLOCKED.value]
     
-    # Get INTERNAL_OMNIBUS account
+    # Get or create INTERNAL_OMNIBUS account (idempotent)
     omnibus_account = db.query(Account).filter(
         Account.account_type == AccountType.INTERNAL_OMNIBUS,
         Account.currency == currency,
     ).first()
     
     if not omnibus_account:
-        raise ValidationError(
-            f"INTERNAL_OMNIBUS account for {currency} does not exist. "
-            "System accounts must be provisioned separately."
+        # Create INTERNAL_OMNIBUS account if it doesn't exist (idempotent)
+        omnibus_account = Account(
+            id=uuid4(),
+            user_id=None,  # System account (no user)
+            currency=currency,
+            account_type=AccountType.INTERNAL_OMNIBUS,
         )
+        db.add(omnibus_account)
+        db.flush()  # Get account.id
     
     omnibus_account_id = omnibus_account.id
     

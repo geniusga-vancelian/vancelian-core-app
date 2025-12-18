@@ -58,7 +58,17 @@ export default function CompliancePage() {
       setResponse(data)
       setReleaseForm({ transaction_id: '', amount: '', reason: '' })
     } catch (err: any) {
-      setError(err as ApiError)
+      // Enhanced error handling - show network/CORS issues more clearly
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        const networkError: ApiError = {
+          code: 'NETWORK_ERROR',
+          message: 'Failed to fetch - Likely CORS issue or backend is down. Check: 1) Backend is running on http://localhost:8000, 2) CORS_ALLOW_ORIGINS includes http://localhost:3000, 3) Browser console for CORS errors',
+          details: { originalError: err.message },
+        }
+        setError(networkError)
+      } else {
+        setError(err as ApiError)
+      }
     } finally {
       setLoading(false)
     }
@@ -75,7 +85,17 @@ export default function CompliancePage() {
       setResponse(data)
       setRejectForm({ transaction_id: '', reason: '' })
     } catch (err: any) {
-      setError(err as ApiError)
+      // Enhanced error handling - show network/CORS issues more clearly
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        const networkError: ApiError = {
+          code: 'NETWORK_ERROR',
+          message: 'Failed to fetch - Likely CORS issue or backend is down. Check: 1) Backend is running on http://localhost:8000, 2) CORS_ALLOW_ORIGINS includes http://localhost:3000, 3) Browser console for CORS errors',
+          details: { originalError: err.message },
+        }
+        setError(networkError)
+      } else {
+        setError(err as ApiError)
+      }
     } finally {
       setLoading(false)
     }
@@ -240,13 +260,13 @@ export default function CompliancePage() {
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-md p-4 mb-4">
-          <div className="text-red-800 font-semibold">Error</div>
+          <div className="text-red-800 font-semibold">Error {error.code && `(${error.code})`}</div>
           <div className="text-red-600 text-sm mt-1">{error.message}</div>
-          {error.code && (
-            <div className="text-red-500 text-xs mt-1">Code: {error.code}</div>
-          )}
           {error.trace_id && (
-            <div className="text-red-500 text-xs mt-1">Trace ID: {error.trace_id}</div>
+            <div className="text-red-500 text-xs mt-1 font-mono">Trace ID: {error.trace_id}</div>
+          )}
+          {error.details && (
+            <div className="text-red-500 text-xs mt-1">Details: {JSON.stringify(error.details)}</div>
           )}
         </div>
       )}
@@ -263,4 +283,5 @@ export default function CompliancePage() {
     </div>
   )
 }
+
 

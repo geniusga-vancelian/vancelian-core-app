@@ -65,9 +65,12 @@ class Account(BaseModel):
     __tablename__ = "accounts"
     __table_args__ = (
         UniqueConstraint('user_id', 'currency', 'account_type', name='uq_accounts_user_currency_type'),
+        # Note: user_id can be NULL for system accounts (INTERNAL_OMNIBUS)
+        # PostgreSQL UNIQUE constraint treats NULL as distinct, so multiple NULLs are allowed
+        # But we ensure only one INTERNAL_OMNIBUS per currency via application logic
     )
 
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", name="fk_accounts_user_id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", name="fk_accounts_user_id"), nullable=True, index=True)  # NULL for system accounts
     currency = Column(String(3), nullable=False, index=True)  # ISO 4217 currency code (e.g., AED, USD)
     account_type = Column(SQLEnum(AccountType, name="account_type", create_constraint=True), nullable=False, default=AccountType.WALLET_AVAILABLE)
     # Note: Account is a read-only representation - balance calculated from LedgerEntry sum

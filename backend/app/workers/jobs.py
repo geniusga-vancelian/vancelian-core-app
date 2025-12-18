@@ -18,3 +18,4 @@ def send_welcome_email(user_id: UUID) -> None:
     # TODO: Implement actual email sending
     logger.info(f"Welcome email sent to user {user_id} (simulated)")
 
+

@@ -107,3 +107,4 @@ Le ledger financier est protégé par:
 6. **Database**: Utiliser des credentials forts et rotation régulière
 7. **Redis**: Sécuriser Redis avec authentification et TLS si accessible depuis l'extérieur
 
+

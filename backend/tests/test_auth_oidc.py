@@ -209,3 +209,4 @@ def test_webhook_no_auth_required(client):
     # May be 401 if HMAC verification fails, but not due to missing OIDC token
     assert response.status_code != 401 or "AUTH_REQUIRED" not in str(response.json())
 
+

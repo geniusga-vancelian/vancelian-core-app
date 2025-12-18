@@ -80,3 +80,4 @@ ALTER ROLE vancelian_readonly WITH PASSWORD 'new-secure-password';
 - Monitor role usage and permissions
 - Review default privileges periodically
 
+

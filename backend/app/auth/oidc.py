@@ -48,9 +48,14 @@ class OIDCVerifier:
         self._ensure_jwks_client()
 
     def _ensure_jwks_client(self):
-        """Ensure JWKS client is initialized"""
+        """Ensure JWKS client is initialized (only needed for OIDC/RS256, not for HS256)"""
+        # If using symmetric key (JWT_SECRET), JWKS is not needed
+        if self.settings.JWT_SECRET:
+            logger.debug("JWT_SECRET configured, skipping JWKS client initialization (using symmetric key)")
+            return
+            
         if not self.settings.OIDC_ISSUER_URL:
-            logger.warning("OIDC_ISSUER_URL not configured, JWT verification disabled")
+            logger.warning("OIDC_ISSUER_URL not configured and JWT_SECRET not set, JWT verification disabled")
             return
 
         if not self._jwks_client:
@@ -72,8 +77,23 @@ class OIDCVerifier:
 
     def _get_signing_key(self, token: str):
         """Get signing key for token"""
+        # Check if using symmetric key (HS256) for development
+        if self.settings.JWT_SECRET:
+            try:
+                # Decode header to check algorithm
+                header = jwt.get_unverified_header(token)
+                alg = header.get("alg", "").upper()
+                # If algorithm matches configured JWT_ALGORITHM (e.g., HS256), use symmetric key
+                if alg == self.settings.JWT_ALGORITHM.upper() or alg in ["HS256", "HS384", "HS512"]:
+                    logger.debug(f"Using symmetric key for algorithm {alg}")
+                    return self.settings.JWT_SECRET
+            except Exception as e:
+                logger.debug(f"Failed to check token header for symmetric key: {e}")
+                # Continue to try JWKS
+        
+        # Fallback to JWKS (OIDC/RS256)
         if not self._jwks_client:
-            raise ValueError("JWKS client not initialized")
+            raise ValueError("JWKS client not initialized and JWT_SECRET not configured for symmetric algorithm")
 
         try:
             # Decode header without verification to get kid
@@ -131,30 +151,40 @@ class OIDCVerifier:
             ExpiredSignatureError: If token is expired
             ValueError: If configuration is missing
         """
-        if not self.settings.OIDC_ISSUER_URL:
-            raise ValueError("OIDC_ISSUER_URL not configured")
+        # Check if using symmetric key (HS256) for development
+        using_symmetric = bool(self.settings.JWT_SECRET)
+        using_oidc = bool(self.settings.OIDC_ISSUER_URL)
+        
+        if not using_symmetric and not using_oidc:
+            raise ValueError("Either JWT_SECRET (for HS256) or OIDC_ISSUER_URL (for RS256) must be configured")
 
         try:
             # Get signing key
             signing_key = self._get_signing_key(token)
 
-            # Decode and verify token
-            algorithms = self.settings.oidc_algorithms_list
+            # Determine algorithms - use JWT_ALGORITHM if using symmetric key, otherwise use OIDC_ALGORITHMS
+            if using_symmetric:
+                algorithms = [self.settings.JWT_ALGORITHM]
+            else:
+                algorithms = self.settings.oidc_algorithms_list
+            
+            # Configure verification options
             options = {
                 "verify_signature": True,
                 "verify_exp": True,
                 "verify_iat": True,
                 "verify_nbf": True,
-                "verify_aud": bool(self.settings.OIDC_AUDIENCE),
-                "verify_iss": bool(self.settings.OIDC_ISSUER_URL),
+                "verify_aud": bool(self.settings.OIDC_AUDIENCE) if using_oidc else False,
+                "verify_iss": bool(self.settings.OIDC_ISSUER_URL) if using_oidc else False,
             }
 
+            # Decode and verify token
             claims = jwt.decode(
                 token,
                 signing_key,
                 algorithms=algorithms,
-                audience=self.settings.OIDC_AUDIENCE if self.settings.OIDC_AUDIENCE else None,
-                issuer=self.settings.OIDC_ISSUER_URL,
+                audience=self.settings.OIDC_AUDIENCE if (using_oidc and self.settings.OIDC_AUDIENCE) else None,
+                issuer=self.settings.OIDC_ISSUER_URL if using_oidc else None,
                 options=options,
                 leeway=self.settings.OIDC_CLOCK_SKEW_SECONDS,
             )
@@ -224,4 +254,5 @@ def verify_jwt_token(token: str) -> Principal:
     """
     verifier = get_verifier()
     return verifier.verify_token(token)
+
 

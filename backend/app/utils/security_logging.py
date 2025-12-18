@@ -173,3 +173,4 @@ def log_repeated_abuse(
             logger.error(f"Failed to write AuditLog for abuse detection: {e}")
             db.rollback()
 
+

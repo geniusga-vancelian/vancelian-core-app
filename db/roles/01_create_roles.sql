@@ -24,3 +24,4 @@ ALTER SCHEMA public OWNER TO vancelian_readwrite;
 COMMENT ON ROLE vancelian_readwrite IS 'Application read-write role for Vancelian Core';
 COMMENT ON ROLE vancelian_readonly IS 'Read-only role for reporting and analytics';
 
+

@@ -30,3 +30,4 @@ shell:
 shell-db:
 	cd infra && docker compose exec postgres psql -U vancelian -d vancelian_core
 
+

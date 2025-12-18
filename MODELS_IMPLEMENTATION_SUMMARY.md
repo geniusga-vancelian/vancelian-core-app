@@ -162,3 +162,4 @@ cd backend && alembic upgrade head
 
 **Status**: ✅ Data model complete - Ready for migration generation.
 
+

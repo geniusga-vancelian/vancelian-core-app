@@ -97,3 +97,4 @@ def validate_operation_balance(
     
     return True
 
+

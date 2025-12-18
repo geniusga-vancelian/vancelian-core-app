@@ -115,3 +115,4 @@ def get_wallet_balances(db: Session, user_id: UUID, currency: str) -> Dict[str, 
         'locked_balance': locked_balance,
     }
 
+

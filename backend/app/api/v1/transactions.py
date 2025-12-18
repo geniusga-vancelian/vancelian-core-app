@@ -80,7 +80,7 @@ async def get_transactions(
     status: Optional[str] = Query(default=None, description="Filter by transaction status"),
     limit: int = Query(default=20, ge=1, le=100, description="Maximum number of transactions to return"),
     db: Session = Depends(get_db),
-    principal: Principal = Depends(require_user_role),
+    principal: Principal = Depends(require_user_role()),
 ) -> List[TransactionListItem]:
     """
     Get transaction history for authenticated user.

@@ -45,7 +45,12 @@ services:
       SECRET_KEY: dev-secret-key-min-32-chars-for-local-development-only
       ZAND_WEBHOOK_SECRET: dev-webhook-secret-for-testing
       LOG_LEVEL: DEBUG
-      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3001
+      DEV_MODE: "true"
+      CORS_ENABLED: "true"
+      CORS_ALLOW_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
+      JWT_SECRET: dev_secret_change_me
+      JWT_ALGORITHM: HS256
       METRICS_PUBLIC: "false"
       METRICS_TOKEN: dev-metrics-token
     ports:
@@ -88,4 +93,5 @@ volumes:
 networks:
   vancelian_dev:
     driver: bridge
+
 

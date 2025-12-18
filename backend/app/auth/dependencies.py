@@ -3,18 +3,20 @@ FastAPI dependencies for OIDC authentication and RBAC
 """
 
 import logging
+from functools import partial
 from typing import List, Optional
 from uuid import UUID
-from fastapi import Depends, HTTPException, status, Header
+from fastapi import Depends, HTTPException, status, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from starlette.requests import Request as StarletteRequest
 
 from app.infrastructure.database import get_db
 from app.infrastructure.settings import get_settings
 from app.core.security.models import Role
 from app.auth.oidc import Principal, verify_jwt_token, get_verifier
 from app.auth.principal import get_or_create_user_from_principal
-from app.utils.trace_id import get_trace_id
+from app.utils.trace_id import get_trace_id, trace_id_context
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ async def extract_bearer_token(
 
 
 async def require_auth(
+    request: StarletteRequest,
     token: Optional[str] = Depends(extract_bearer_token),
     db: Session = Depends(get_db),
 ) -> Principal:
@@ -60,6 +63,7 @@ async def require_auth(
     """
     if not token:
         settings = get_settings()
+        trace_id = get_trace_id(request) or trace_id_context.get()
         if not settings.OIDC_ISSUER_URL:
             # OIDC not configured, skip auth in development
             logger.warning("OIDC not configured, skipping authentication (development mode)")
@@ -69,7 +73,7 @@ async def require_auth(
                     "error": {
                         "code": "AUTH_REQUIRED",
                         "message": "Authentication required but OIDC not configured",
-                        "trace_id": get_trace_id(),
+                        "trace_id": trace_id,
                     }
                 },
             )
@@ -80,7 +84,7 @@ async def require_auth(
                 "error": {
                     "code": "AUTH_REQUIRED",
                     "message": "Missing or invalid Authorization header",
-                    "trace_id": get_trace_id(),
+                    "trace_id": trace_id,
                 }
             },
         )
@@ -110,13 +114,14 @@ async def require_auth(
             error_code = "AUTH_INVALID_SIGNATURE"
             error_message = "Invalid token signature"
         
+        trace_id = get_trace_id(request) or trace_id_context.get()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
                 "error": {
                     "code": error_code,
                     "message": error_message,
-                    "trace_id": get_trace_id(),
+                    "trace_id": trace_id,
                 }
             },
         )
@@ -159,22 +164,13 @@ def _principal_has_role(principal: Principal, required_role: Role) -> bool:
     return False
 
 
-async def require_roles(
-    *allowed_roles: Role,
+async def _require_roles_impl(
+    allowed_roles: tuple[Role, ...],
+    request: StarletteRequest,
     principal: Principal = Depends(require_auth),
 ) -> Principal:
     """
-    FastAPI dependency to require specific roles.
-    
-    Usage:
-        @router.get("/admin/users")
-        async def list_users(
-            principal: Principal = Depends(require_roles(Role.ADMIN, Role.OPS))
-        ):
-            ...
-    
-    Raises:
-        HTTPException 403: If user doesn't have required role
+    Internal implementation for role checking.
     """
     if not allowed_roles:
         # No role requirement, just require auth
@@ -189,13 +185,14 @@ async def require_roles(
             f"does not have required roles {[r.value for r in allowed_roles]}"
         )
         
+        trace_id = get_trace_id(request) or trace_id_context.get()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "error": {
                     "code": "FORBIDDEN",
                     "message": f"Access denied: required roles {[r.value for r in allowed_roles]}",
-                    "trace_id": get_trace_id(),
+                    "trace_id": trace_id,
                 }
             },
         )
@@ -203,26 +200,37 @@ async def require_roles(
     return principal
 
 
+def require_roles(*allowed_roles: Role):
+    """
+    Factory function to create a FastAPI dependency that requires specific roles.
+    
+    Usage:
+        @router.get("/admin/users")
+        async def list_users(
+            principal: Principal = Depends(require_roles(Role.ADMIN, Role.OPS))
+        ):
+            ...
+    
+    Raises:
+        HTTPException 403: If user doesn't have required role
+    """
+    return partial(_require_roles_impl, allowed_roles)
+
+
 # Convenience dependencies for common role requirements
-async def require_user_role(
-    principal: Principal = Depends(require_roles(Role.USER)),
-) -> Principal:
+def require_user_role():
     """Require USER role (for /api/v1/* endpoints)"""
-    return principal
+    return require_roles(Role.USER)
 
 
-async def require_admin_role(
-    principal: Principal = Depends(require_roles(Role.ADMIN, Role.COMPLIANCE, Role.OPS, Role.READ_ONLY)),
-) -> Principal:
+def require_admin_role():
     """Require one of: ADMIN, COMPLIANCE, OPS, READ_ONLY (for /admin/v1/* endpoints)"""
-    return principal
+    return require_roles(Role.ADMIN, Role.COMPLIANCE, Role.OPS, Role.READ_ONLY)
 
 
-async def require_compliance_or_ops(
-    principal: Principal = Depends(require_roles(Role.COMPLIANCE, Role.OPS)),
-) -> Principal:
+def require_compliance_or_ops():
     """Require COMPLIANCE or OPS role"""
-    return principal
+    return require_roles(Role.COMPLIANCE, Role.OPS)
 
 
 # Helper to get user_id from principal

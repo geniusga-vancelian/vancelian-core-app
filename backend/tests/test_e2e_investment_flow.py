@@ -149,3 +149,4 @@ def test_investment_insufficient_balance_validation(
             reason="Test insufficient balance",
         )
 
+

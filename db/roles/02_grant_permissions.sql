@@ -26,3 +26,4 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 COMMENT ON ROLE vancelian_readwrite IS 'Has full read-write access to all tables';
 COMMENT ON ROLE vancelian_readonly IS 'Has read-only access to all tables';
 
+

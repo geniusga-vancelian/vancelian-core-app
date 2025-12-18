@@ -48,7 +48,7 @@ class Operation(BaseModel):
     type = Column(SQLEnum(OperationType, name="operation_type", create_constraint=True), nullable=False, index=True)
     status = Column(SQLEnum(OperationStatus, name="operation_status", create_constraint=True), nullable=False, default=OperationStatus.PENDING, index=True)
     idempotency_key = Column(String(255), unique=True, nullable=True, index=True)
-    metadata = Column(JSON, nullable=True)  # JSONB in PostgreSQL - flexible metadata storage
+    operation_metadata = Column(JSON, nullable=True)  # JSONB in PostgreSQL - flexible metadata storage (renamed from metadata to avoid SQLAlchemy conflict)
 
     # Relationships
     transaction = relationship("Transaction", back_populates="operations")

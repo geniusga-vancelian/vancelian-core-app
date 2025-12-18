@@ -35,3 +35,4 @@ def test_trace_id_in_error_response(client: TestClient):
     # Check that trace_id is also in response header
     assert "X-Trace-ID" in response.headers
 
+

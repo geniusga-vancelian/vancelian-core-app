@@ -50,7 +50,7 @@ def validate_offer_exists(offer_id: UUID) -> bool:
 async def create_investment(
     request: CreateInvestmentRequest,
     db: Session = Depends(get_db),
-    principal: Principal = Depends(require_user_role),
+    principal: Principal = Depends(require_user_role()),
 ) -> CreateInvestmentResponse:
     """
     Create investment intent and lock funds.

@@ -129,3 +129,4 @@ curl "http://localhost:8001/api/v1/transactions?user_id=123e4567-e89b-12d3-a456-
 
 **Status**: ✅ Read-only API endpoints complete - Wallet and Transactions endpoints ready for use.
 
+

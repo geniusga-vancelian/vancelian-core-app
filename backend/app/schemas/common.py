@@ -18,3 +18,4 @@ class ReadyResponse(BaseModel):
     database: str
     redis: str
 
+

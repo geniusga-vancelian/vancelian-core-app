@@ -50,7 +50,7 @@ class Transaction(BaseModel):
     type = Column(SQLEnum(TransactionType, name="transaction_type", create_constraint=True), nullable=False, index=True)
     status = Column(SQLEnum(TransactionStatus, name="transaction_status", create_constraint=True), nullable=False, default=TransactionStatus.INITIATED, index=True)
     external_reference = Column(String(255), nullable=True, index=True)  # e.g., ZAND Bank reference
-    metadata = Column(JSON, nullable=True)  # JSONB in PostgreSQL - flexible metadata storage
+    transaction_metadata = Column(JSON, nullable=True)  # JSONB in PostgreSQL - flexible metadata storage (renamed from metadata to avoid SQLAlchemy conflict)
 
     # Relationships
     user = relationship("User", backref="transactions")

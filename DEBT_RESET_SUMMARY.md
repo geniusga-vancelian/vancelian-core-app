@@ -174,3 +174,4 @@ Ouvrir http://localhost:8001/docs dans un navigateur
 - `AUDIT_REPORT.md` - Rapport d'audit complet
 - `docs/local-dev.md` - Guide développement local
 
+

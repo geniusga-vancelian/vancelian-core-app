@@ -133,3 +133,4 @@ app/
 - [ ] Imports Python fonctionnent (pas d'erreur de module)
 - [ ] Structure correspond à VANCELIAN_SYSTEM.md Section 3.2
 
+
