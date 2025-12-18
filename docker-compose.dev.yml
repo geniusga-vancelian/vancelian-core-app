@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: vancelian-postgres-dev
+    environment:
+      POSTGRES_USER: vancelian
+      POSTGRES_PASSWORD: vancelian_password
+      POSTGRES_DB: vancelian_core
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vancelian"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vancelian_dev
+
+  redis:
+    image: redis:7-alpine
+    container_name: vancelian-redis-dev
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - vancelian_dev
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vancelian-backend-dev
+    environment:
+      ENV: development
+      DATABASE_URL: postgresql://vancelian:vancelian_password@postgres:5432/vancelian_core
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: dev-secret-key-min-32-chars-for-local-development-only
+      ZAND_WEBHOOK_SECRET: dev-webhook-secret-for-testing
+      LOG_LEVEL: DEBUG
+      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:3001
+      METRICS_PUBLIC: "false"
+      METRICS_TOKEN: dev-metrics-token
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - vancelian_dev
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: vancelian-frontend-dev
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_ZAND_WEBHOOK_SECRET: dev-webhook-secret-for-testing
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    command: npm run dev
+    networks:
+      - vancelian_dev
+
+volumes:
+  postgres_dev_data:
+    driver: local
+
+networks:
+  vancelian_dev:
+    driver: bridge
+

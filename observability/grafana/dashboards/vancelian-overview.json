@@ -1,0 +1,100 @@
+{
+  "dashboard": {
+    "title": "Vancelian Core - Overview",
+    "tags": ["vancelian", "core"],
+    "timezone": "utc",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "HTTP Requests Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total[5m])",
+            "legendFormat": "{{method}} {{path}} ({{status}})"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "HTTP Request Duration (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, http_request_duration_seconds)",
+            "legendFormat": "{{path}} ({{method}})"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Error Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
+            "legendFormat": "5xx errors"
+          },
+          {
+            "expr": "rate(http_requests_total{status=~\"4..\"}[5m])",
+            "legendFormat": "4xx errors"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 4,
+        "title": "Webhook Metrics",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(zand_webhook_received_total[5m])",
+            "legendFormat": "Received"
+          },
+          {
+            "expr": "rate(zand_webhook_rejected_total[5m])",
+            "legendFormat": "Rejected ({{reason}})"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Ledger Invariant Violations",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "ledger_invariant_violations_total",
+            "legendFormat": "Total Violations"
+          }
+        ],
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {"value": 0, "color": "green"},
+            {"value": 1, "color": "red"}
+          ]
+        },
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Rate Limited Requests",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(rate_limited_total[5m])",
+            "legendFormat": "{{group}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 18, "x": 6, "y": 16}
+      }
+    ]
+  }
+}
+

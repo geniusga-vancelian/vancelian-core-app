@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: vancelian-core-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vancelian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vancelian_password}
+      POSTGRES_DB: ${POSTGRES_DB:-vancelian_core}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vancelian}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vancelian-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: vancelian-core-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - vancelian-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vancelian-core-backend
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vancelian}:${POSTGRES_PASSWORD:-vancelian_password}@postgres:5432/${POSTGRES_DB:-vancelian_core}
+      REDIS_URL: redis://redis:6379/0
+      DEBUG: ${DEBUG:-True}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+    ports:
+      - "8001:8001"
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    networks:
+      - vancelian-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  vancelian-network:
+    driver: bridge
+

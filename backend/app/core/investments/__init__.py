@@ -1,0 +1,4 @@
+"""
+Investments domain
+"""
+

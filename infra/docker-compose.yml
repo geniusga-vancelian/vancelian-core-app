@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: vancelian-core-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vancelian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vancelian_password}
+      POSTGRES_DB: ${POSTGRES_DB:-vancelian_core}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vancelian}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vancelian-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: vancelian-core-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - vancelian-network
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: vancelian-core-backend
+    environment:
+      # Environment (local, staging, prod)
+      ENV: ${ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Database connection (hostname 'postgres' is the service name in Docker network)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vancelian}:${POSTGRES_PASSWORD:-vancelian_password}@postgres:5432/${POSTGRES_DB:-vancelian_core}
+      # Redis connection (hostname 'redis' is the service name in Docker network)
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-here-change-in-production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+    ports:
+      - "8001:8001"  # API accessible on http://localhost:8001
+    volumes:
+      # WARNING: Bind-mount volumes are for local development only.
+      # Remove volumes section in production deployments.
+      - ../backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+    networks:
+      - vancelian-network
+
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: vancelian-core-worker
+    environment:
+      # Environment (local, staging, prod) - must match backend
+      ENV: ${ENV:-local}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Database connection (hostname 'postgres' is the service name in Docker network)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vancelian}:${POSTGRES_PASSWORD:-vancelian_password}@postgres:5432/${POSTGRES_DB:-vancelian_core}
+      # Redis connection (hostname 'redis' is the service name in Docker network)
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-here-change-in-production}
+    volumes:
+      # WARNING: Bind-mount volumes are for local development only.
+      # Remove volumes section in production deployments.
+      - ../backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python -m app.workers.worker
+    networks:
+      - vancelian-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  vancelian-network:
+    driver: bridge
+
