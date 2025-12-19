@@ -2,9 +2,10 @@
 FastAPI application entry point
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.infrastructure.settings import get_settings
@@ -70,6 +71,27 @@ redis_client = get_redis()
 app.add_middleware(RateLimitMiddleware, redis_client=redis_client)
 
 # Register exception handlers
+from app.services.storage.exceptions import StorageNotConfiguredError
+
+async def storage_not_configured_handler(request: Request, exc: StorageNotConfiguredError) -> JSONResponse:
+    """Handle StorageNotConfiguredError - return 412 Precondition Failed"""
+    from app.utils.trace_id import get_trace_id
+    trace_id = get_trace_id(request)
+    
+    error_response = {
+        "error": {
+            "code": exc.code,
+            "message": exc.message,
+            "trace_id": trace_id,
+        }
+    }
+    
+    return JSONResponse(
+        status_code=412,  # Precondition Failed
+        content=error_response,
+    )
+
+app.add_exception_handler(StorageNotConfiguredError, storage_not_configured_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
