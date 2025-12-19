@@ -460,6 +460,12 @@ export default function OfferDetailPage() {
 
   // Document upload handler
   const handleDocumentUpload = async () => {
+    // Guard: don't proceed if storage is not enabled
+    if (storageEnabled === false) {
+      setDocumentsError("Storage is not configured. Please configure S3/R2 storage to enable uploads.")
+      return
+    }
+    
     if (!offerId || !documentForm.file || !documentForm.name) return
 
     setUploadingDocument(true)
