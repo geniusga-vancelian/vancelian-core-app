@@ -42,15 +42,23 @@ app = FastAPI(
 )
 
 # Add CORS middleware IMMEDIATELY after app creation (before other middlewares and routers)
-# This ensures CORS headers are applied to all routes including webhooks
+# This ensures CORS headers are applied to all routes including webhooks and admin endpoints
 # Configuration comes from settings (can be overridden via environment variables in docker-compose)
+# DEV CORS origins for frontend-client (3000) and frontend-admin (3001)
+DEV_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+]
+
 if settings.CORS_ENABLED:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_allow_origins_list,
-        allow_methods=settings.cors_allow_methods_list if settings.cors_allow_methods_list else ["*"],
-        allow_headers=settings.cors_allow_headers_list if settings.cors_allow_headers_list else ["*"],
-        allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+        allow_origins=DEV_CORS_ORIGINS,  # Use explicit DEV origins for clarity
+        allow_methods=["*"],  # Allow all methods for dev flexibility
+        allow_headers=["*"],  # Allow all headers for dev flexibility (includes Authorization, Content-Type, etc.)
+        allow_credentials=True,  # Required for frontend-admin uploads with Authorization headers
     )
 
 # Add custom middlewares (order matters - first added is outermost)

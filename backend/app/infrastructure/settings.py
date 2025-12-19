@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         "X-Zand-Signature",
         "X-Zand-Timestamp",
     ]
-    CORS_ALLOW_CREDENTIALS: bool = False  # Don't require credentials for webhooks (can use Authorization header instead)
+    CORS_ALLOW_CREDENTIALS: bool = True  # Allow credentials (cookies, Authorization headers) for frontend-admin uploads
     
     # Legacy: ALLOWED_ORIGINS (for backward compatibility)
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
@@ -103,6 +103,22 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     ADMIN_V1_PREFIX: str = "/admin/v1"
     WEBHOOKS_V1_PREFIX: str = "/webhooks/v1"
+    
+    # S3/R2 Storage Configuration
+    STORAGE_PROVIDER: str = "s3"  # "s3" for AWS S3 or Cloudflare R2
+    S3_ENDPOINT_URL: str = ""  # Required for R2 (e.g., https://<account-id>.r2.cloudflarestorage.com), empty for AWS
+    S3_REGION: str = "auto"  # "auto" for R2, or AWS region like "eu-west-1"
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    S3_BUCKET: str = ""
+    S3_PUBLIC_BASE_URL: str = ""  # Optional: CDN/public base URL (e.g., https://cdn.example.com)
+    S3_PRESIGN_EXPIRES_SECONDS: int = 900  # Presigned URL expiration (default: 15 minutes)
+    S3_KEY_PREFIX: str = "offers"  # Prefix for all object keys (e.g., "offers/{offer_id}/...")
+    
+    # Upload size limits (in bytes)
+    S3_MAX_DOCUMENT_SIZE: int = 50 * 1024 * 1024  # 50MB default
+    S3_MAX_VIDEO_SIZE: int = 200 * 1024 * 1024  # 200MB default
+    S3_MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB default
 
     @field_validator('CORS_ALLOW_ORIGINS', mode='before')
     @classmethod
