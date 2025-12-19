@@ -342,5 +342,214 @@ export const offersAdminApi = {
       total: number
     }>(`admin/v1/offers/${offerId}/investments?${queryParams.toString()}`)
   },
+
+  /**
+   * Presign upload URL for media or document
+   */
+  presignUpload: async (
+    offerId: string,
+    payload: {
+      upload_type: 'media' | 'document'
+      file_name: string
+      mime_type: string
+      size_bytes: number
+      media_type?: 'IMAGE' | 'VIDEO'
+      document_kind?: 'BROCHURE' | 'MEMO' | 'PROJECTIONS' | 'VALUATION' | 'OTHER'
+    }
+  ): Promise<{
+    upload_url: string
+    key: string
+    required_headers: Record<string, string>
+    expires_in: number
+  }> => {
+    return apiRequest<{
+      upload_url: string
+      key: string
+      required_headers: Record<string, string>
+      expires_in: number
+    }>(`admin/v1/offers/${offerId}/uploads/presign`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  /**
+   * Create media metadata after upload
+   */
+  createOfferMedia: async (
+    offerId: string,
+    payload: {
+      key: string
+      mime_type: string
+      size_bytes: number
+      type: 'IMAGE' | 'VIDEO'
+      sort_order?: number
+      is_cover?: boolean
+      visibility?: 'PUBLIC' | 'PRIVATE'
+      url?: string
+      width?: number
+      height?: number
+      duration_seconds?: number
+    }
+  ): Promise<{
+    id: string
+    offer_id: string
+    type: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    sort_order: number
+    is_cover: boolean
+    created_at: string
+    width?: number
+    height?: number
+    duration_seconds?: number
+  }> => {
+    return apiRequest<{
+      id: string
+      offer_id: string
+      type: string
+      url?: string
+      mime_type: string
+      size_bytes: number
+      sort_order: number
+      is_cover: boolean
+      created_at: string
+      width?: number
+      height?: number
+      duration_seconds?: number
+    }>(`admin/v1/offers/${offerId}/media`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  /**
+   * Create document metadata after upload
+   */
+  createOfferDocument: async (
+    offerId: string,
+    payload: {
+      name: string
+      kind: 'BROCHURE' | 'MEMO' | 'PROJECTIONS' | 'VALUATION' | 'OTHER'
+      key: string
+      mime_type: string
+      size_bytes: number
+      visibility?: 'PUBLIC' | 'PRIVATE'
+      url?: string
+    }
+  ): Promise<{
+    id: string
+    offer_id: string
+    name: string
+    kind: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    created_at: string
+  }> => {
+    return apiRequest<{
+      id: string
+      offer_id: string
+      name: string
+      kind: string
+      url?: string
+      mime_type: string
+      size_bytes: number
+      created_at: string
+    }>(`admin/v1/offers/${offerId}/documents`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  /**
+   * List media for an offer
+   */
+  listOfferMedia: async (offerId: string): Promise<Array<{
+    id: string
+    offer_id: string
+    type: 'IMAGE' | 'VIDEO'
+    url?: string
+    mime_type: string
+    size_bytes: number
+    sort_order: number
+    is_cover: boolean
+    created_at: string
+    width?: number
+    height?: number
+    duration_seconds?: number
+  }>> => {
+    return apiRequest<Array<{
+      id: string
+      offer_id: string
+      type: 'IMAGE' | 'VIDEO'
+      url?: string
+      mime_type: string
+      size_bytes: number
+      sort_order: number
+      is_cover: boolean
+      created_at: string
+      width?: number
+      height?: number
+      duration_seconds?: number
+    }>>(`admin/v1/offers/${offerId}/media`)
+  },
+
+  /**
+   * List documents for an offer
+   */
+  listOfferDocuments: async (offerId: string): Promise<Array<{
+    id: string
+    offer_id: string
+    name: string
+    kind: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    created_at: string
+  }>> => {
+    return apiRequest<Array<{
+      id: string
+      offer_id: string
+      name: string
+      kind: string
+      url?: string
+      mime_type: string
+      size_bytes: number
+      created_at: string
+    }>>(`admin/v1/offers/${offerId}/documents`)
+  },
+
+  /**
+   * Reorder media items
+   */
+  reorderOfferMedia: async (
+    offerId: string,
+    items: Array<{ id: string; sort_order: number; is_cover?: boolean }>
+  ): Promise<void> => {
+    return apiRequest<void>(`admin/v1/offers/${offerId}/media/reorder`, {
+      method: 'PATCH',
+      body: JSON.stringify({ items }),
+    })
+  },
+
+  /**
+   * Delete media item
+   */
+  deleteOfferMedia: async (offerId: string, mediaId: string): Promise<void> => {
+    return apiRequest<void>(`admin/v1/offers/${offerId}/media/${mediaId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  /**
+   * Delete document
+   */
+  deleteOfferDocument: async (offerId: string, docId: string): Promise<void> => {
+    return apiRequest<void>(`admin/v1/offers/${offerId}/documents/${docId}`, {
+      method: 'DELETE',
+    })
+  },
 }
 

@@ -33,7 +33,9 @@ from app.core.compliance.models import AuditLog
 # 7. Offer models (depends on User and Operation)
 from app.core.offers.models import (
     Offer, OfferInvestment, OfferStatus, OfferInvestmentStatus,
-    InvestmentIntent, InvestmentIntentStatus
+    InvestmentIntent, InvestmentIntentStatus,
+    OfferMedia, MediaType, MediaVisibility,
+    OfferDocument, DocumentKind, DocumentVisibility,
 )
 
 # Export all for convenience
@@ -59,5 +61,11 @@ __all__ = [
     "OfferInvestmentStatus",
     "InvestmentIntent",
     "InvestmentIntentStatus",
+    "OfferMedia",
+    "MediaType",
+    "MediaVisibility",
+    "OfferDocument",
+    "DocumentKind",
+    "DocumentVisibility",
 ]
 

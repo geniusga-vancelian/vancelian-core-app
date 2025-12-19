@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { getToken, apiRequest, parseApiError, offersApi, type Offer } from "@/lib/api"
+import { getToken, apiRequest, offersApi, type Offer } from "@/lib/api"
 
 interface WalletBalance {
   currency: string
@@ -52,9 +52,8 @@ export default function InvestPage() {
         setWallet(walletData)
       }
     } catch (err: any) {
-      const apiError = parseApiError(err)
-      setError(apiError.message || "Failed to load data")
-      setTraceId(apiError.trace_id || null)
+      setError(err.message || "Failed to load data")
+      setTraceId(err.trace_id || null)
 
       if (err.status === 401 || err.status === 403) {
         setTimeout(() => router.push('/login'), 2000)

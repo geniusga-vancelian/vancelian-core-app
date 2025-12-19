@@ -112,6 +112,30 @@ export const parseApiError = async (response: Response): Promise<{
 /**
  * Offers API
  */
+export interface MediaItem {
+  id: string
+  type: 'IMAGE' | 'VIDEO'
+  url?: string | null
+  mime_type: string
+  size_bytes: number
+  sort_order: number
+  is_cover: boolean
+  created_at: string
+  width?: number
+  height?: number
+  duration_seconds?: number
+}
+
+export interface DocumentItem {
+  id: string
+  name: string
+  kind: string
+  url?: string | null
+  mime_type: string
+  size_bytes: number
+  created_at: string
+}
+
 export interface Offer {
   id: string
   code: string
@@ -126,6 +150,8 @@ export interface Offer {
   metadata?: Record<string, any>
   created_at: string
   updated_at?: string
+  media?: MediaItem[]
+  documents?: DocumentItem[]
 }
 
 export interface ListOffersParams {

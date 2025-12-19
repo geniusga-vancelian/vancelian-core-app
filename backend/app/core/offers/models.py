@@ -3,7 +3,7 @@ Offer models - Exclusive investment offers
 """
 
 from decimal import Decimal
-from sqlalchemy import Column, String, ForeignKey, Enum as SQLEnum, Numeric, Text, DateTime, Index, CheckConstraint
+from sqlalchemy import Column, String, ForeignKey, Enum as SQLEnum, Numeric, Text, DateTime, Index, CheckConstraint, Integer, BigInteger, Boolean
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import enum
@@ -61,6 +61,8 @@ class Offer(BaseModel):
     # Relationships
     investments = relationship("OfferInvestment", back_populates="offer", lazy="select")
     investment_intents = relationship("InvestmentIntent", back_populates="offer", lazy="select")
+    media = relationship("OfferMedia", back_populates="offer", cascade="all, delete-orphan", lazy="select")
+    documents = relationship("OfferDocument", back_populates="offer", cascade="all, delete-orphan", lazy="select")
     
     # Table-level constraints
     __table_args__ = (
@@ -161,3 +163,94 @@ class InvestmentIntent(BaseModel):
         Index('idx_investment_intents_user_status', 'user_id', 'status'),
     )
 
+
+class MediaType(str, enum.Enum):
+    """Media type enum"""
+    IMAGE = "IMAGE"
+    VIDEO = "VIDEO"
+
+
+class MediaVisibility(str, enum.Enum):
+    """Media visibility enum"""
+    PUBLIC = "PUBLIC"
+    PRIVATE = "PRIVATE"
+
+
+class OfferMedia(BaseModel):
+    """
+    OfferMedia model - Represents media files (images/videos) for an offer stored in S3/R2
+    
+    Features:
+    - Stores metadata only (actual file in S3/R2)
+    - Supports presigned URLs for upload/download
+    - Supports sorting and cover image selection
+    """
+    
+    __tablename__ = "offer_media"
+    
+    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id", name="fk_offer_media_offer_id"), nullable=False, index=True)
+    type = Column(SQLEnum(MediaType, name="media_type", create_constraint=True), nullable=False, index=True)
+    key = Column(String(512), unique=True, nullable=False, index=True)  # S3/R2 object key
+    url = Column(String(1024), nullable=True)  # Optional public CDN URL
+    mime_type = Column(String(100), nullable=False)  # e.g., image/jpeg, video/mp4
+    size_bytes = Column(BigInteger, nullable=False)
+    width = Column(Integer, nullable=True)  # For images/videos
+    height = Column(Integer, nullable=True)  # For images/videos
+    duration_seconds = Column(Integer, nullable=True)  # For videos
+    sort_order = Column(Integer, nullable=False, default=0, index=True)
+    is_cover = Column(Boolean, nullable=False, default=False, index=True)
+    visibility = Column(SQLEnum(MediaVisibility, name="media_visibility", create_constraint=True), nullable=False, default=MediaVisibility.PUBLIC, index=True)
+    
+    # Relationships
+    offer = relationship("Offer", back_populates="media")
+    
+    # Table-level constraints
+    __table_args__ = (
+        CheckConstraint('size_bytes > 0', name='check_media_size_positive'),
+        CheckConstraint('sort_order >= 0', name='check_media_sort_order_non_negative'),
+        Index('idx_offer_media_offer_sort', 'offer_id', 'sort_order'),
+    )
+
+
+class DocumentKind(str, enum.Enum):
+    """Document kind enum"""
+    BROCHURE = "BROCHURE"
+    MEMO = "MEMO"
+    PROJECTIONS = "PROJECTIONS"
+    VALUATION = "VALUATION"
+    OTHER = "OTHER"
+
+
+class DocumentVisibility(str, enum.Enum):
+    """Document visibility enum"""
+    PUBLIC = "PUBLIC"
+    PRIVATE = "PRIVATE"
+
+
+class OfferDocument(BaseModel):
+    """
+    OfferDocument model - Represents documents (PDFs, etc.) for an offer stored in S3/R2
+    
+    Features:
+    - Stores metadata only (actual file in S3/R2)
+    - Supports presigned URLs for upload/download
+    """
+    
+    __tablename__ = "offer_documents"
+    
+    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id", name="fk_offer_documents_offer_id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    kind = Column(SQLEnum(DocumentKind, name="document_kind", create_constraint=True), nullable=False, index=True)
+    key = Column(String(512), unique=True, nullable=False, index=True)  # S3/R2 object key
+    mime_type = Column(String(100), nullable=False)  # e.g., application/pdf
+    size_bytes = Column(BigInteger, nullable=False)
+    visibility = Column(SQLEnum(DocumentVisibility, name="document_visibility", create_constraint=True), nullable=False, default=DocumentVisibility.PUBLIC, index=True)
+    url = Column(String(1024), nullable=True)  # Optional public CDN URL
+    
+    # Relationships
+    offer = relationship("Offer", back_populates="documents")
+    
+    # Table-level constraints
+    __table_args__ = (
+        CheckConstraint('size_bytes > 0', name='check_document_size_positive'),
+    )

@@ -65,7 +65,7 @@ services:
       CORS_ALLOW_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
       CORS_ALLOW_METHODS: "*"
       CORS_ALLOW_HEADERS: "*"
-      CORS_ALLOW_CREDENTIALS: "false"
+      CORS_ALLOW_CREDENTIALS: "true"
       ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001
       JWT_SECRET: dev_secret_change_me
       JWT_ALGORITHM: HS256

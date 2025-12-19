@@ -10,11 +10,14 @@ from decimal import Decimal
 import logging
 
 from app.infrastructure.database import get_db
-from app.core.offers.models import Offer, OfferStatus
-from app.schemas.offers import OfferResponse, InvestInOfferRequest, OfferInvestmentResponse
+from app.core.offers.models import Offer, OfferStatus, OfferMedia, OfferDocument, MediaVisibility, DocumentVisibility
+from app.schemas.offers import OfferResponse, InvestInOfferRequest, OfferInvestmentResponse, MediaItemResponse, DocumentItemResponse
 from app.auth.dependencies import require_user_role
 from app.auth.oidc import Principal
 from app.utils.trace_id import get_trace_id
+from app.infrastructure.settings import get_settings
+
+settings = get_settings()
 
 logger = logging.getLogger(__name__)
 from app.services.offers.service_v1_1 import (
@@ -29,6 +32,87 @@ from app.services.offers.service_v1_1 import (
 from app.services.fund_services import InsufficientBalanceError, ValidationError
 
 router = APIRouter()
+
+
+def resolve_media_url(media: OfferMedia) -> Optional[str]:
+    """Resolve media URL (public CDN or None for presigned)"""
+    if media.url:
+        return media.url
+    if settings.S3_PUBLIC_BASE_URL:
+        return f"{settings.S3_PUBLIC_BASE_URL.rstrip('/')}/{media.key}"
+    return None
+
+
+def resolve_document_url(doc: OfferDocument) -> Optional[str]:
+    """Resolve document URL (public CDN or None for presigned)"""
+    if doc.url:
+        return doc.url
+    if settings.S3_PUBLIC_BASE_URL:
+        return f"{settings.S3_PUBLIC_BASE_URL.rstrip('/')}/{doc.key}"
+    return None
+
+
+def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
+    """Build OfferResponse with media and documents (PUBLIC only)"""
+    # Get PUBLIC media
+    media_list = db.query(OfferMedia).filter(
+        OfferMedia.offer_id == offer.id,
+        OfferMedia.visibility == MediaVisibility.PUBLIC
+    ).order_by(OfferMedia.sort_order.asc(), OfferMedia.created_at.asc()).all()
+    
+    media_items = []
+    for media in media_list:
+        url = resolve_media_url(media)
+        media_items.append(MediaItemResponse(
+            id=str(media.id),
+            type=media.type.value,
+            url=url,
+            mime_type=media.mime_type,
+            size_bytes=media.size_bytes,
+            sort_order=media.sort_order,
+            is_cover=media.is_cover,
+            created_at=media.created_at.isoformat(),
+            width=media.width,
+            height=media.height,
+            duration_seconds=media.duration_seconds,
+        ))
+    
+    # Get PUBLIC documents
+    docs = db.query(OfferDocument).filter(
+        OfferDocument.offer_id == offer.id,
+        OfferDocument.visibility == DocumentVisibility.PUBLIC
+    ).order_by(OfferDocument.created_at.desc()).all()
+    
+    doc_items = []
+    for doc in docs:
+        url = resolve_document_url(doc)
+        doc_items.append(DocumentItemResponse(
+            id=str(doc.id),
+            name=doc.name,
+            kind=doc.kind.value,
+            url=url,
+            mime_type=doc.mime_type,
+            size_bytes=doc.size_bytes,
+            created_at=doc.created_at.isoformat(),
+        ))
+    
+    return OfferResponse(
+        id=str(offer.id),
+        code=offer.code,
+        name=offer.name,
+        description=offer.description,
+        currency=offer.currency,
+        max_amount=str(offer.max_amount),
+        committed_amount=str(offer.committed_amount or offer.invested_amount),
+        remaining_amount=str(offer.remaining_amount if hasattr(offer, 'remaining_amount') else (offer.max_amount - (offer.invested_amount or offer.committed_amount))),
+        maturity_date=offer.maturity_date.isoformat() if offer.maturity_date else None,
+        status=offer.status.value,
+        metadata=offer.offer_metadata,
+        created_at=offer.created_at.isoformat(),
+        updated_at=offer.updated_at.isoformat() if offer.updated_at else None,
+        media=media_items,
+        documents=doc_items,
+    )
 
 
 @router.get(
@@ -55,24 +139,7 @@ async def list_offers(
     
     offers = query.order_by(Offer.created_at.desc()).limit(limit).offset(offset).all()
     
-    return [
-        OfferResponse(
-            id=str(offer.id),
-            code=offer.code,
-            name=offer.name,
-            description=offer.description,
-            currency=offer.currency,
-            max_amount=str(offer.max_amount),
-            committed_amount=str(offer.committed_amount or offer.invested_amount),
-            remaining_amount=str(offer.remaining_amount if hasattr(offer, 'remaining_amount') else (offer.max_amount - (offer.invested_amount or offer.committed_amount))),
-            maturity_date=offer.maturity_date.isoformat() if offer.maturity_date else None,
-            status=offer.status.value,
-            metadata=offer.offer_metadata,
-            created_at=offer.created_at.isoformat(),
-            updated_at=offer.updated_at.isoformat() if offer.updated_at else None,
-        )
-        for offer in offers
-    ]
+    return [build_offer_response(offer, db) for offer in offers]
 
 
 @router.get(
@@ -101,21 +168,7 @@ async def get_offer(
             detail="OFFER_NOT_FOUND"
         )
     
-    return OfferResponse(
-        id=str(offer.id),
-        code=offer.code,
-        name=offer.name,
-        description=offer.description,
-        currency=offer.currency,
-        max_amount=str(offer.max_amount),
-        committed_amount=str(offer.committed_amount),
-        remaining_amount=str(offer.max_amount - offer.committed_amount),
-        maturity_date=offer.maturity_date.isoformat() if offer.maturity_date else None,
-        status=offer.status.value,
-        metadata=offer.offer_metadata,
-        created_at=offer.created_at.isoformat(),
-        updated_at=offer.updated_at.isoformat() if offer.updated_at else None,
-    )
+    return build_offer_response(offer, db)
 
 
 @router.post(
