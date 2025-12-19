@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
-import { offersAdminApi, parseApiError, type Offer, type UpdateOfferPayload } from "@/lib/api"
+import { offersAdminApi, systemApi, parseApiError, type Offer, type UpdateOfferPayload } from "@/lib/api"
 
 interface Investment {
   id: string
@@ -86,14 +86,28 @@ export default function OfferDetailPage() {
   const [documentForm, setDocumentForm] = useState({ name: '', kind: 'BROCHURE' as const, file: null as File | null })
   const documentFileInputRef = useRef<HTMLInputElement>(null)
 
+  // Storage status
+  const [storageEnabled, setStorageEnabled] = useState<boolean | null>(null)
+
   useEffect(() => {
     if (offerId) {
       loadOffer()
       loadInvestments()
       loadMedia()
       loadDocuments()
+      loadStorageStatus()
     }
   }, [offerId, investmentStatusFilter])
+
+  const loadStorageStatus = async () => {
+    try {
+      const info = await systemApi.getStorageInfo()
+      setStorageEnabled(info.enabled)
+    } catch (err) {
+      // If we can't check storage status, assume it's not configured
+      setStorageEnabled(false)
+    }
+  }
 
   const loadOffer = async () => {
     setLoading(true)
@@ -822,20 +836,30 @@ export default function OfferDetailPage() {
             />
             <button
               onClick={() => mediaFileInputRef.current?.click()}
-              disabled={uploadingMedia}
+              disabled={uploadingMedia || storageEnabled === false}
               className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
             >
               {uploadingMedia ? "Uploading..." : "Upload Images"}
             </button>
             <button
               onClick={() => videoFileInputRef.current?.click()}
-              disabled={uploadingMedia}
+              disabled={uploadingMedia || storageEnabled === false}
               className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 text-sm"
             >
               {uploadingMedia ? "Uploading..." : "Add Promo Video"}
             </button>
           </div>
         </div>
+
+        {storageEnabled === false && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+            <div className="text-yellow-800 font-medium mb-1">⚠️ Storage not configured</div>
+            <div className="text-sm text-yellow-700">
+              Media uploads require S3/R2 storage configuration. Set S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY environment variables.
+              See docs/STORAGE_R2_SETUP.md for setup instructions.
+            </div>
+          </div>
+        )}
 
         {mediaError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
@@ -964,11 +988,22 @@ export default function OfferDetailPage() {
           <h2 className="text-xl font-semibold">Documents</h2>
           <button
             onClick={() => setShowDocumentForm(!showDocumentForm)}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+            disabled={storageEnabled === false}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
           >
             {showDocumentForm ? "Cancel" : "Add Document"}
           </button>
         </div>
+
+        {storageEnabled === false && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+            <div className="text-yellow-800 font-medium mb-1">⚠️ Storage not configured</div>
+            <div className="text-sm text-yellow-700">
+              Document uploads require S3/R2 storage configuration. Set S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY environment variables.
+              See docs/STORAGE_R2_SETUP.md for setup instructions.
+            </div>
+          </div>
+        )}
 
         {documentsError && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
