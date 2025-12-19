@@ -182,3 +182,116 @@ export const adminApi = {
   },
 }
 
+/**
+ * Offers Admin API
+ */
+export interface Offer {
+  id: string
+  code: string
+  name: string
+  description?: string
+  currency: string
+  status: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
+  max_amount: string
+  committed_amount: string
+  remaining_amount: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+  created_at: string
+  updated_at?: string
+}
+
+export interface CreateOfferPayload {
+  code: string
+  name: string
+  description?: string
+  currency?: string
+  max_amount: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+}
+
+export interface UpdateOfferPayload {
+  name?: string
+  description?: string
+  max_amount?: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+}
+
+export interface ListOffersParams {
+  status?: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
+  currency?: string
+  limit?: number
+  offset?: number
+}
+
+export const offersAdminApi = {
+  /**
+   * List offers
+   */
+  listOffers: async (params?: ListOffersParams): Promise<Offer[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.currency) queryParams.append('currency', params.currency)
+    queryParams.append('limit', String(params?.limit || 50))
+    queryParams.append('offset', String(params?.offset || 0))
+    
+    return apiRequest<Offer[]>(`admin/v1/offers?${queryParams.toString()}`)
+  },
+
+  /**
+   * Create offer
+   */
+  createOffer: async (payload: CreateOfferPayload): Promise<Offer> => {
+    return apiRequest<Offer>('admin/v1/offers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  /**
+   * Get offer by ID
+   */
+  getOffer: async (id: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${id}`)
+  },
+
+  /**
+   * Update offer
+   */
+  updateOffer: async (id: string, payload: UpdateOfferPayload): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  /**
+   * Publish offer (DRAFT -> LIVE)
+   */
+  publishOffer: async (id: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${id}/publish`, {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Pause offer (LIVE -> PAUSED)
+   */
+  pauseOffer: async (id: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${id}/pause`, {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Close offer (LIVE/PAUSED -> CLOSED)
+   */
+  closeOffer: async (id: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${id}/close`, {
+      method: 'POST',
+    })
+  },
+}
+

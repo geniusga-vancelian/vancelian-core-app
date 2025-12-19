@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { getToken, apiRequest, parseApiError } from "@/lib/api"
+import { getToken, apiRequest, parseApiError, investmentsApi } from "@/lib/api"
 
 interface WalletBalance {
   currency: string
@@ -13,11 +13,26 @@ interface WalletBalance {
 }
 
 interface Transaction {
-  transaction_id: string
+  transaction_id: string | null
+  operation_id: string | null
   type: string
+  operation_type: string | null
   status: string
   amount: string
   currency: string
+  created_at: string
+  metadata: Record<string, any> | null
+  offer_product: string | null
+}
+
+interface InvestmentPosition {
+  investment_id: string
+  offer_id: string
+  offer_code: string
+  offer_name: string
+  principal: string
+  currency: string
+  status: string
   created_at: string
 }
 
@@ -34,6 +49,7 @@ export default function Dashboard() {
   const [token, setToken] = useState<string | null>(null)
   const [wallet, setWallet] = useState<WalletBalance | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [investments, setInvestments] = useState<InvestmentPosition[]>([])
   const [loading, setLoading] = useState(true)
   const [errors, setErrors] = useState<ApiError[]>([])
   const [showBootstrap, setShowBootstrap] = useState(false)
@@ -82,8 +98,8 @@ export default function Dashboard() {
         setWallet(walletData)
       }
 
-      // Load transactions (no currency param - backend doesn't support it)
-      const transactionsResponse = await apiRequest('api/v1/transactions?limit=20')
+      // Load transactions with currency filter
+      const transactionsResponse = await apiRequest('api/v1/transactions?currency=AED&limit=20')
       
       if (!transactionsResponse.ok) {
         const error = await parseApiError(transactionsResponse)
@@ -100,6 +116,15 @@ export default function Dashboard() {
       } else {
         const transactionsData = await transactionsResponse.json()
         setTransactions(transactionsData)
+      }
+
+      // Load investment positions
+      try {
+        const investmentsData = await investmentsApi.list({ currency: 'AED', status: 'ACCEPTED' })
+        setInvestments(investmentsData)
+      } catch (err: any) {
+        // Don't show error for investments if endpoint doesn't exist yet
+        console.warn('Failed to load investments:', err)
       }
     } catch (err: any) {
       setErrors(prev => [...prev, {
@@ -150,6 +175,9 @@ export default function Dashboard() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Dashboard</h1>
         <div className="space-x-4">
+          <a href="/invest" className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+            Invest in an Offer
+          </a>
           <a href="/me" className="text-blue-600 hover:underline">Profile</a>
           <a href="/transactions" className="text-blue-600 hover:underline">All Transactions</a>
         </div>
@@ -211,6 +239,59 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Investments/Positions Module */}
+      <div className="bg-white border border-gray-200 rounded-lg mb-8">
+        <div className="p-4 border-b border-gray-200">
+          <h2 className="text-xl font-semibold">Your Investments</h2>
+        </div>
+        {investments.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            No active investments yet
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Offer</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Code</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Principal</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {investments.map((inv) => (
+                  <tr key={inv.investment_id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{inv.offer_name}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-500 font-mono">{inv.offer_code}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right font-mono">
+                      {parseFloat(inv.principal).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {inv.currency}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 rounded text-sm ${
+                        inv.status === 'ACCEPTED' ? 'bg-green-100 text-green-800' :
+                        inv.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {inv.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {new Date(inv.created_at).toLocaleString('fr-FR')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Transactions List */}
       <div className="bg-white border border-gray-200 rounded-lg">
         <div className="p-4 border-b border-gray-200">
@@ -225,42 +306,79 @@ export default function Dashboard() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date/Time</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Offer/Product</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {transactions.map((txn) => (
-                  <tr key={txn.transaction_id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 rounded text-sm ${
-                        txn.type === 'DEPOSIT' ? 'bg-green-100 text-green-800' :
-                        txn.type === 'WITHDRAWAL' ? 'bg-red-100 text-red-800' :
-                        'bg-blue-100 text-blue-800'
-                      }`}>
-                        {txn.type}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 rounded text-sm ${
-                        txn.status === 'AVAILABLE' ? 'bg-green-100 text-green-800' :
-                        txn.status === 'FAILED' ? 'bg-red-100 text-red-800' :
-                        txn.status === 'COMPLIANCE_REVIEW' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {txn.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right font-mono">
-                      {parseFloat(txn.amount).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {txn.currency}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(txn.created_at).toLocaleString('fr-FR')}
-                    </td>
-                  </tr>
-                ))}
+                {transactions.map((txn) => {
+                  const typeLabel = txn.type === 'DEPOSIT' ? 'Deposit' :
+                                   txn.type === 'WITHDRAWAL' ? 'Withdrawal' :
+                                   txn.type === 'INVESTMENT' ? 'Investment' :
+                                   txn.operation_type === 'INVEST_EXCLUSIVE' ? 'Investment' :
+                                   txn.type
+                  const offerInfo = txn.offer_product || txn.metadata?.offer_name || txn.metadata?.offer_code
+                  const txnId = txn.transaction_id || txn.operation_id
+                  return (
+                    <tr
+                      key={txnId}
+                      className="hover:bg-gray-50 cursor-pointer"
+                      onClick={() => router.push(`/transactions/${txnId}`)}
+                    >
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {new Date(txn.created_at).toLocaleString('fr-FR', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-1 rounded text-sm ${
+                          txn.type === 'DEPOSIT' || txn.operation_type === 'DEPOSIT_AED' ? 'bg-green-100 text-green-800' :
+                          txn.type === 'WITHDRAWAL' ? 'bg-red-100 text-red-800' :
+                          txn.type === 'INVESTMENT' || txn.operation_type === 'INVEST_EXCLUSIVE' ? 'bg-blue-100 text-blue-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {typeLabel}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right font-mono">
+                        {parseFloat(txn.amount).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {txn.currency}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-1 rounded text-sm ${
+                          txn.status === 'AVAILABLE' || txn.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
+                          txn.status === 'FAILED' ? 'bg-red-100 text-red-800' :
+                          txn.status === 'COMPLIANCE_REVIEW' || txn.status === 'LOCKED' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {txn.status}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {offerInfo ? (
+                          <div>
+                            {txn.offer_product ? (
+                              <div className="font-medium">{txn.offer_product}</div>
+                            ) : (
+                              <>
+                                <div className="font-medium">{txn.metadata?.offer_name}</div>
+                                <div className="text-xs text-gray-400 font-mono">{txn.metadata?.offer_code}</div>
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

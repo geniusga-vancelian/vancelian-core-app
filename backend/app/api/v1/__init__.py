@@ -7,6 +7,7 @@ from app.infrastructure.settings import get_settings
 from app.api.v1.wallet import router as wallet_router
 from app.api.v1.transactions import router as transactions_router
 from app.api.v1.investments import router as investments_router
+from app.api.v1.offers import router as offers_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.me import router as me_router
 
@@ -31,4 +32,5 @@ router.include_router(me_router)
 router.include_router(wallet_router)
 router.include_router(transactions_router)
 router.include_router(investments_router)
+router.include_router(offers_router)
 

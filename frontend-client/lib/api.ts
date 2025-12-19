@@ -109,3 +109,253 @@ export const parseApiError = async (response: Response): Promise<{
   }
 }
 
+/**
+ * Offers API
+ */
+export interface Offer {
+  id: string
+  code: string
+  name: string
+  description?: string
+  currency: string
+  status: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
+  max_amount: string
+  committed_amount: string
+  remaining_amount: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+  created_at: string
+  updated_at?: string
+}
+
+export interface ListOffersParams {
+  status?: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
+  currency?: string
+  limit?: number
+  offset?: number
+}
+
+export interface InvestInOfferPayload {
+  amount: string
+  currency: string
+  idempotency_key?: string
+}
+
+export interface InvestInOfferResponse {
+  investment_id: string
+  offer_id: string
+  requested_amount: string
+  accepted_amount: string
+  currency: string
+  status: string
+  offer_committed_amount: string
+  offer_remaining_amount: string
+  created_at: string
+}
+
+export const offersApi = {
+  /**
+   * List offers
+   */
+  listOffers: async (params?: ListOffersParams): Promise<Offer[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.currency) queryParams.append('currency', params.currency)
+    queryParams.append('limit', String(params?.limit || 50))
+    queryParams.append('offset', String(params?.offset || 0))
+    
+    const response = await apiRequest(`api/v1/offers?${queryParams.toString()}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch offers')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  /**
+   * Get offer by ID
+   */
+  getOffer: async (id: string): Promise<Offer> => {
+    const response = await apiRequest(`api/v1/offers/${id}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch offer')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  /**
+   * Invest in an offer
+   */
+  invest: async (offerId: string, payload: InvestInOfferPayload): Promise<InvestInOfferResponse> => {
+    const response = await apiRequest(`api/v1/offers/${offerId}/invest`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to invest in offer')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+}
+
+/**
+ * Investments API
+ */
+export interface CreateInvestmentPayload {
+  amount: string
+  currency: string
+  offer_id: string
+  reason: string
+}
+
+export interface CreateInvestmentResponse {
+  transaction_id: string
+  status: string
+}
+
+export interface InvestmentPosition {
+  investment_id: string
+  offer_id: string
+  offer_code: string
+  offer_name: string
+  principal: string
+  currency: string
+  status: string
+  created_at: string
+}
+
+export interface ListInvestmentsParams {
+  currency?: string
+  status?: string
+  limit?: number
+}
+
+export const investmentsApi = {
+  /**
+   * Create investment
+   */
+  create: async (payload: CreateInvestmentPayload): Promise<CreateInvestmentResponse> => {
+    const response = await apiRequest('api/v1/investments', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to create investment')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  /**
+   * List investment positions
+   */
+  list: async (params?: ListInvestmentsParams): Promise<InvestmentPosition[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.currency) queryParams.append('currency', params.currency)
+    if (params?.status) queryParams.append('status', params.status)
+    queryParams.append('limit', String(params?.limit || 50))
+    
+    const response = await apiRequest(`api/v1/investments?${queryParams.toString()}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch investments')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+}
+
+/**
+ * Transactions API
+ */
+export interface Transaction {
+  transaction_id?: string
+  operation_id?: string
+  type: string
+  operation_type?: string
+  status: string
+  amount: string
+  currency: string
+  created_at: string
+  metadata?: Record<string, any>
+  offer_product?: string
+}
+
+export interface TransactionDetail {
+  id: string
+  type: string
+  status: string
+  amount: string
+  currency: string
+  created_at: string
+  updated_at?: string | null
+  metadata?: Record<string, any>
+  trace_id?: string | null
+  user_email?: string | null
+  operation_id?: string | null
+  operation_type?: string | null
+  movement?: {
+    from_bucket: string
+    to_bucket: string
+  } | null
+}
+
+export const transactionsApi = {
+  /**
+   * List transactions
+   */
+  list: async (currency?: string, limit?: number): Promise<Transaction[]> => {
+    const queryParams = new URLSearchParams()
+    if (currency) queryParams.append('currency', currency)
+    queryParams.append('limit', String(limit || 50))
+    
+    const response = await apiRequest(`api/v1/transactions?${queryParams.toString()}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch transactions')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  /**
+   * Get transaction by ID
+   */
+  getById: async (transactionId: string): Promise<TransactionDetail> => {
+    const response = await apiRequest(`api/v1/transactions/${transactionId}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch transaction')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+}
+

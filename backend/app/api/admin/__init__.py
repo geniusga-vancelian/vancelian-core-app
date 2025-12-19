@@ -7,6 +7,7 @@ from app.infrastructure.settings import get_settings
 from app.api.admin.compliance import router as compliance_router
 from app.api.admin.users import router as users_router
 from app.api.admin.transactions import router as transactions_router
+from app.api.admin.offers import router as offers_router
 
 settings = get_settings()
 router = APIRouter(prefix=settings.ADMIN_V1_PREFIX, tags=["admin-v1"])
@@ -15,3 +16,4 @@ router = APIRouter(prefix=settings.ADMIN_V1_PREFIX, tags=["admin-v1"])
 router.include_router(compliance_router)
 router.include_router(users_router, tags=["admin-users"])
 router.include_router(transactions_router, tags=["admin-transactions"])
+router.include_router(offers_router, tags=["admin-offers"])

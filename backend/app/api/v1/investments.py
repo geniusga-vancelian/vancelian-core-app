@@ -1,168 +1,123 @@
 """
-Investment API endpoints - USER-facing
+Investments/Positions API endpoints - READ-ONLY
 """
 
-import logging
+from typing import Optional, List
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 
 from app.infrastructure.database import get_db
-from app.core.transactions.models import Transaction, TransactionType, TransactionStatus
+from app.core.offers.models import OfferInvestment, OfferInvestmentStatus, Offer
 from app.core.accounts.models import Account, AccountType
-from app.core.security.models import Role
-from app.schemas.investments import CreateInvestmentRequest, CreateInvestmentResponse
-from app.services.fund_services import (
-    lock_funds_for_investment,
-    InsufficientBalanceError,
-    ValidationError,
-)
-from app.services.wallet_helpers import get_account_balance, ensure_wallet_accounts
-from app.services.transaction_engine import recompute_transaction_status
 from app.auth.dependencies import require_user_role, get_user_id_from_principal
 from app.auth.oidc import Principal
-from app.utils.metrics import record_investment_action
-
-logger = logging.getLogger(__name__)
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
 
-def validate_offer_exists(offer_id: UUID) -> bool:
-    """
-    Validate that investment offer exists.
-    
-    TODO: Implement actual offer validation against investment offers database.
-    For now, this is a stub that accepts all UUIDs.
-    """
-    # TODO: Query investment offers table to verify offer exists and is available
-    # For now, stub accepts all valid UUIDs
-    return True
+class InvestmentPositionResponse(BaseModel):
+    """Investment position response schema"""
+    investment_id: str = Field(..., description="OfferInvestment UUID")
+    offer_id: str = Field(..., description="Offer UUID")
+    offer_code: str = Field(..., description="Offer code (e.g., NEST-ALBARARI-001)")
+    offer_name: str = Field(..., description="Offer name")
+    principal: str = Field(..., description="Accepted investment amount (principal)")
+    currency: str = Field(..., description="Currency code")
+    status: str = Field(..., description="Investment status (ACCEPTED, REJECTED, PENDING)")
+    created_at: str = Field(..., description="ISO 8601 timestamp")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "investment_id": "123e4567-e89b-12d3-a456-426614174000",
+                "offer_id": "123e4567-e89b-12d3-a456-426614174001",
+                "offer_code": "NEST-ALBARARI-001",
+                "offer_name": "Al Barari Exclusive",
+                "principal": "10000.00",
+                "currency": "AED",
+                "status": "ACCEPTED",
+                "created_at": "2025-12-18T00:00:00Z",
+            }
+        }
 
 
-@router.post(
+@router.get(
     "/investments",
-    response_model=CreateInvestmentResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create investment intent",
-    description="Lock funds for investment. Funds move from AVAILABLE to LOCKED compartment. Requires USER role.",
+    response_model=List[InvestmentPositionResponse],
+    summary="Get investment positions",
+    description="Get list of user's investment positions (active investments in offers). READ-ONLY endpoint. Requires USER role.",
 )
-async def create_investment(
-    request: CreateInvestmentRequest,
+async def get_investments(
+    currency: Optional[str] = Query(default=None, description="Filter by currency (e.g., AED)"),
+    status: Optional[str] = Query(default=None, description="Filter by investment status (ACCEPTED, REJECTED, PENDING)"),
+    limit: int = Query(default=50, ge=1, le=100, description="Maximum number of positions to return"),
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_user_role()),
-) -> CreateInvestmentResponse:
+) -> List[InvestmentPositionResponse]:
     """
-    Create investment intent and lock funds.
+    Get investment positions for authenticated user.
     
-    This endpoint:
-    1. Validates offer exists (stub for now)
-    2. Validates sufficient available balance
-    3. Creates Transaction (type=INVESTMENT, status=INITIATED)
-    4. Calls lock_funds_for_investment() to move funds AVAILABLE → LOCKED
-    5. Triggers Transaction Status Engine recompute
-    6. Creates AuditLog entry
+    Returns OfferInvestment records ordered by created_at DESC.
     
-    Access: USER role only.
-    
-    Validation:
-    - Amount must be > 0
-    - Sufficient available_balance
-    - Offer must exist (stub validation)
-    
-    Flow:
-    - Transaction created: type=INVESTMENT, status=INITIATED
-    - Funds locked: AVAILABLE → LOCKED
-    - Status updated: INITIATED → LOCKED
+    READ-ONLY: No side effects, no mutations.
     
     Requires authentication (Bearer token) with USER role.
     """
     user_id = get_user_id_from_principal(principal)
     
-    # Validate offer exists (stub)
-    if not validate_offer_exists(request.offer_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Investment offer {request.offer_id} not found"
-        )
+    # Build query
+    query = db.query(OfferInvestment).filter(OfferInvestment.user_id == user_id)
     
-    # Ensure wallet accounts exist
-    wallet_accounts = ensure_wallet_accounts(db, user_id, request.currency)
-    available_account_id = wallet_accounts[AccountType.WALLET_AVAILABLE.value]
+    # Apply filters
+    if currency:
+        query = query.filter(OfferInvestment.currency == currency)
     
-    # Check available balance
-    available_balance = get_account_balance(db, available_account_id)
-    if available_balance < request.amount:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Insufficient available balance: {available_balance} < {request.amount}"
-        )
+    if status:
+        try:
+            investment_status = OfferInvestmentStatus[status.upper()]
+            query = query.filter(OfferInvestment.status == investment_status)
+        except KeyError:
+            raise HTTPException(status_code=400, detail=f"Invalid investment status: {status}")
     
-    # Create Transaction
-    transaction = Transaction(
-        user_id=user_id,
-        type=TransactionType.INVESTMENT,
-        status=TransactionStatus.INITIATED,  # Will be updated to LOCKED by Transaction Status Engine
-        transaction_metadata={
-            "offer_id": str(request.offer_id),
-            "currency": request.currency,
-            "reason": request.reason,
-        },
-    )
-    db.add(transaction)
-    db.flush()  # Get transaction.id
+    # Order and limit
+    investments = query.order_by(OfferInvestment.created_at.desc()).limit(limit).all()
     
-    try:
-        # Lock funds for investment
-        operation = lock_funds_for_investment(
-            db=db,
-            user_id=user_id,
-            currency=request.currency,
-            amount=request.amount,
-            transaction_id=transaction.id,
-            reason=request.reason,
-        )
+    # Build response with offer details
+    result = []
+    for inv in investments:
+        # Get offer details
+        offer = db.query(Offer).filter(Offer.id == inv.offer_id).first()
+        if not offer:
+            continue  # Skip if offer not found
         
-        # Recompute transaction status (should be LOCKED now)
-        new_status = recompute_transaction_status(
-            db=db,
-            transaction_id=transaction.id,
-        )
+        # Normalize datetime
+        if inv.created_at.tzinfo is not None:
+            created_at_utc = inv.created_at.astimezone(timezone.utc)
+            iso_str = created_at_utc.isoformat()
+            if iso_str.endswith('+00:00') or iso_str.endswith('-00:00'):
+                created_at_str = iso_str[:-6] + 'Z'
+            elif '+' in iso_str or (iso_str.count('-') >= 3 and len(iso_str) > 19):
+                if len(iso_str) >= 6 and iso_str[-6] in '+-' and iso_str[-3] == ':':
+                    created_at_str = iso_str[:-6] + 'Z'
+                else:
+                    created_at_str = iso_str + 'Z'
+            else:
+                created_at_str = iso_str + 'Z'
+        else:
+            created_at_str = inv.created_at.isoformat() + "Z"
         
-        # Record metrics
-        record_investment_action()
-        
-        logger.info(
-            f"Investment created: transaction_id={transaction.id}, "
-            f"offer_id={request.offer_id}, amount={request.amount}, "
-            f"status={new_status.value}, user_id={user_id}"
-        )
-        
-        return CreateInvestmentResponse(
-            transaction_id=str(transaction.id),
-            status=new_status.value,
-        )
-        
-    except InsufficientBalanceError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
-        )
-    except ValidationError as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
-        )
-    except Exception as e:
-        db.rollback()
-        logger.error(
-            f"Error creating investment: user_id={user_id}, offer_id={request.offer_id}, "
-            f"error={str(e)}",
-            exc_info=True
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing investment request"
-        )
+        result.append(InvestmentPositionResponse(
+            investment_id=str(inv.id),
+            offer_id=str(inv.offer_id),
+            offer_code=offer.code,
+            offer_name=offer.name,
+            principal=str(inv.accepted_amount),
+            currency=inv.currency,
+            status=inv.status.value,
+            created_at=created_at_str,
+        ))
+    
+    return result

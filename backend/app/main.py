@@ -41,14 +41,16 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# Add CORS middleware if enabled
+# Add CORS middleware IMMEDIATELY after app creation (before other middlewares and routers)
+# This ensures CORS headers are applied to all routes including webhooks
+# Configuration comes from settings (can be overridden via environment variables in docker-compose)
 if settings.CORS_ENABLED:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allow_origins_list,
+        allow_methods=settings.cors_allow_methods_list if settings.cors_allow_methods_list else ["*"],
+        allow_headers=settings.cors_allow_headers_list if settings.cors_allow_headers_list else ["*"],
         allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-        allow_methods=settings.cors_allow_methods_list,
-        allow_headers=settings.cors_allow_headers_list,
     )
 
 # Add custom middlewares (order matters - first added is outermost)

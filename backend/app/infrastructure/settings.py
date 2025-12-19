@@ -76,11 +76,11 @@ class Settings(BaseSettings):
     # Lists are preferred, but strings from env vars are auto-parsed
     CORS_ALLOW_ORIGINS: Union[str, List[str]] = [
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
     ]
-    CORS_ALLOW_METHODS: Union[str, List[str]] = [
-        "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
-    ]
+    CORS_ALLOW_METHODS: Union[str, List[str]] = ["*"]  # Allow all methods for dev flexibility
     CORS_ALLOW_HEADERS: Union[str, List[str]] = [
         "Authorization",
         "Content-Type",
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         "X-Zand-Signature",
         "X-Zand-Timestamp",
     ]
-    CORS_ALLOW_CREDENTIALS: bool = True  # Allow credentials in CORS requests
+    CORS_ALLOW_CREDENTIALS: bool = False  # Don't require credentials for webhooks (can use Authorization header instead)
     
     # Legacy: ALLOWED_ORIGINS (for backward compatibility)
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
