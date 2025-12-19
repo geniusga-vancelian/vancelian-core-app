@@ -2,25 +2,31 @@
 Client API - Offers (read-only listing + invest)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import Optional, List
 from decimal import Decimal
+import logging
 
 from app.infrastructure.database import get_db
 from app.core.offers.models import Offer, OfferStatus
 from app.schemas.offers import OfferResponse, InvestInOfferRequest, OfferInvestmentResponse
 from app.auth.dependencies import require_user_role
 from app.auth.oidc import Principal
-from app.services.offers.service import (
-    invest_in_offer,
+from app.utils.trace_id import get_trace_id
+
+logger = logging.getLogger(__name__)
+from app.services.offers.service_v1_1 import (
+    invest_in_offer_v1_1,
     OfferNotFoundError,
     OfferNotLiveError,
     OfferCurrencyMismatchError,
     OfferFullError,
+    OfferClosedError,
+    InsufficientAvailableFundsError,
 )
-from app.services.fund_services import InsufficientBalanceError
+from app.services.fund_services import InsufficientBalanceError, ValidationError
 
 router = APIRouter()
 
@@ -57,8 +63,8 @@ async def list_offers(
             description=offer.description,
             currency=offer.currency,
             max_amount=str(offer.max_amount),
-            committed_amount=str(offer.committed_amount),
-            remaining_amount=str(offer.max_amount - offer.committed_amount),
+            committed_amount=str(offer.committed_amount or offer.invested_amount),
+            remaining_amount=str(offer.remaining_amount if hasattr(offer, 'remaining_amount') else (offer.max_amount - (offer.invested_amount or offer.committed_amount))),
             maturity_date=offer.maturity_date.isoformat() if offer.maturity_date else None,
             status=offer.status.value,
             metadata=offer.offer_metadata,
@@ -122,14 +128,21 @@ async def get_offer(
 async def invest_in_offer_endpoint(
     offer_id: UUID,
     request: InvestInOfferRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_user_role()),
 ) -> OfferInvestmentResponse:
     """Invest in an offer"""
+    trace_id = get_trace_id(http_request) or "unknown"
     user_id = UUID(principal.sub)
     
+    logger.info(
+        f"Investment request: offer_id={offer_id}, user_id={user_id}, amount={request.amount}, currency={request.currency}",
+        extra={"trace_id": trace_id, "offer_id": str(offer_id), "user_id": str(user_id)}
+    )
+    
     try:
-        investment = invest_in_offer(
+        intent, remaining_after = invest_in_offer_v1_1(
             db=db,
             user_id=user_id,
             offer_id=offer_id,
@@ -138,42 +151,82 @@ async def invest_in_offer_endpoint(
             idempotency_key=request.idempotency_key,
         )
         
-        # Refresh offer to get updated committed_amount
+        # Commit transaction (all writes are atomic)
+        db.commit()
+        
+        # Refresh offer to get updated invested_amount
         offer = db.query(Offer).filter(Offer.id == offer_id).first()
         
         return OfferInvestmentResponse(
-            investment_id=str(investment.id),
-            offer_id=str(investment.offer_id),
-            requested_amount=str(investment.requested_amount),
-            accepted_amount=str(investment.accepted_amount),
-            currency=investment.currency,
-            status=investment.status.value,
-            offer_committed_amount=str(offer.committed_amount),
-            offer_remaining_amount=str(offer.max_amount - offer.committed_amount),
-            created_at=investment.created_at.isoformat(),
+            investment_id=str(intent.id),
+            offer_id=str(intent.offer_id),
+            requested_amount=str(intent.requested_amount),
+            accepted_amount=str(intent.allocated_amount),  # v1.1 uses allocated_amount
+            currency=intent.currency,
+            status=intent.status.value,  # PENDING, CONFIRMED, REJECTED
+            offer_committed_amount=str(offer.invested_amount or offer.committed_amount),
+            offer_remaining_amount=str(remaining_after),
+            created_at=intent.created_at.isoformat(),
+        )
+    except ValidationError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
         )
     except OfferNotFoundError:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="OFFER_NOT_FOUND"
         )
-    except OfferNotLiveError as e:
+    except OfferClosedError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="OFFER_CLOSED"
+        )
+    except OfferNotLiveError:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="OFFER_NOT_LIVE"
         )
     except OfferCurrencyMismatchError:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="OFFER_CURRENCY_MISMATCH"
         )
     except OfferFullError:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="OFFER_FULL"
         )
-    except InsufficientBalanceError:
+    except InsufficientAvailableFundsError:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="INSUFFICIENT_FUNDS"
+            detail="INSUFFICIENT_AVAILABLE_FUNDS"
+        )
+    except InsufficientBalanceError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="INSUFFICIENT_AVAILABLE_FUNDS"
+        )
+    except Exception as e:
+        db.rollback()
+        logger.exception(
+            f"Unexpected error in invest_in_offer_endpoint: {type(e).__name__}: {str(e)}",
+            extra={"trace_id": trace_id, "offer_id": str(offer_id), "user_id": str(user_id), "error_type": type(e).__name__}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "INTERNAL_ERROR",
+                "trace_id": trace_id,
+                "message": "An unexpected error occurred"
+            }
         )

@@ -5,7 +5,7 @@ Pydantic schemas for Offers API
 from pydantic import BaseModel, Field
 from decimal import Decimal
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from uuid import UUID
 
 
@@ -60,10 +60,39 @@ class OfferInvestmentResponse(BaseModel):
     requested_amount: str = Field(..., description="Requested investment amount")
     accepted_amount: str = Field(..., description="Accepted investment amount (may be less than requested)")
     currency: str = Field(..., description="Currency code")
-    status: str = Field(..., description="Investment status (PENDING, ACCEPTED, REJECTED)")
+    status: str = Field(..., description="Investment status (PENDING, CONFIRMED, REJECTED) - v1.1")
     offer_committed_amount: str = Field(..., description="Total committed amount in offer after this investment")
     offer_remaining_amount: str = Field(..., description="Remaining capacity in offer after this investment")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
+
+    class Config:
+        from_attributes = True
+
+
+class OfferInvestmentListItem(BaseModel):
+    """Admin view of an investment intent for an offer"""
+    id: str = Field(..., description="Investment Intent UUID")
+    offer_id: str = Field(..., description="Offer UUID")
+    user_id: str = Field(..., description="User UUID")
+    user_email: str = Field(..., description="User email address")
+    requested_amount: str = Field(..., description="Requested investment amount")
+    allocated_amount: str = Field(..., description="Allocated investment amount (may be less than requested)")
+    currency: str = Field(..., description="Currency code")
+    status: str = Field(..., description="Investment Intent status (PENDING, CONFIRMED, REJECTED)")
+    created_at: str = Field(..., description="Creation timestamp (ISO format)")
+    updated_at: Optional[str] = Field(None, description="Last update timestamp (ISO format)")
+    idempotency_key: Optional[str] = Field(None, description="Idempotency key")
+
+    class Config:
+        from_attributes = True
+
+
+class OfferInvestmentsPaginatedResponse(BaseModel):
+    """Paginated response for offer investments list"""
+    items: List[OfferInvestmentListItem] = Field(..., description="List of investment intents")
+    limit: int = Field(..., description="Maximum number of results per page")
+    offset: int = Field(..., description="Number of results skipped")
+    total: int = Field(..., description="Total number of investment intents matching the filter")
 
     class Config:
         from_attributes = True

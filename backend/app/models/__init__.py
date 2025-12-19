@@ -31,7 +31,10 @@ from app.core.ledger.models import Operation, OperationType, OperationStatus, Le
 from app.core.compliance.models import AuditLog
 
 # 7. Offer models (depends on User and Operation)
-from app.core.offers.models import Offer, OfferInvestment, OfferStatus, OfferInvestmentStatus
+from app.core.offers.models import (
+    Offer, OfferInvestment, OfferStatus, OfferInvestmentStatus,
+    InvestmentIntent, InvestmentIntentStatus
+)
 
 # Export all for convenience
 __all__ = [
@@ -54,5 +57,7 @@ __all__ = [
     "OfferInvestment",
     "OfferStatus",
     "OfferInvestmentStatus",
+    "InvestmentIntent",
+    "InvestmentIntentStatus",
 ]
 

@@ -2,6 +2,7 @@
 Offer models - Exclusive investment offers
 """
 
+from decimal import Decimal
 from sqlalchemy import Column, String, ForeignKey, Enum as SQLEnum, Numeric, Text, DateTime, Index, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -24,15 +25,24 @@ class OfferInvestmentStatus(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+class InvestmentIntentStatus(str, enum.Enum):
+    """InvestmentIntent status enum (v1.1)"""
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    REJECTED = "REJECTED"
+
+
 class Offer(BaseModel):
     """
-    Offer model - Represents an exclusive investment offer
+    Offer model - Represents an exclusive investment offer (v1.1)
     
     Features:
-    - max_amount: Maximum amount that can be committed
-    - committed_amount: Current amount committed (sum of accepted investments)
+    - max_amount: Maximum amount that can be invested (hard cap)
+    - invested_amount: Current amount invested (sum of confirmed investments)
+    - remaining_amount: Computed as max_amount - invested_amount (MUST NEVER go below 0)
+    - committed_amount: Legacy field (alias for invested_amount, kept for backward compatibility)
     - status: DRAFT, LIVE, PAUSED, CLOSED
-    - Enforces max_amount limit via row-level locking
+    - Enforces max_amount limit via row-level locking (SELECT ... FOR UPDATE)
     """
     
     __tablename__ = "offers"
@@ -41,22 +51,32 @@ class Offer(BaseModel):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     currency = Column(String(3), nullable=False, default="AED", index=True)  # ISO 4217
-    max_amount = Column(Numeric(24, 8), nullable=False)  # Maximum amount that can be committed
-    committed_amount = Column(Numeric(24, 8), nullable=False, default=0)  # Current amount committed
+    max_amount = Column(Numeric(24, 8), nullable=False)  # Maximum amount that can be invested
+    invested_amount = Column(Numeric(24, 8), nullable=False, default=0)  # Current amount invested (v1.1)
+    committed_amount = Column(Numeric(24, 8), nullable=False, default=0)  # Legacy: alias for invested_amount
     maturity_date = Column(DateTime(timezone=True), nullable=True)  # Maturity date (timestamptz)
     status = Column(SQLEnum(OfferStatus, name="offer_status", create_constraint=True), nullable=False, default=OfferStatus.DRAFT, index=True)
     offer_metadata = Column('metadata', JSONB, nullable=True)  # Flexible JSONB metadata (DB column: metadata)
     
     # Relationships
     investments = relationship("OfferInvestment", back_populates="offer", lazy="select")
+    investment_intents = relationship("InvestmentIntent", back_populates="offer", lazy="select")
     
     # Table-level constraints
     __table_args__ = (
         CheckConstraint('max_amount > 0', name='check_max_amount_positive'),
+        CheckConstraint('invested_amount >= 0', name='check_invested_amount_non_negative'),
+        CheckConstraint('invested_amount <= max_amount', name='check_invested_not_exceed_max'),
         CheckConstraint('committed_amount >= 0', name='check_committed_amount_non_negative'),
         CheckConstraint('committed_amount <= max_amount', name='check_committed_not_exceed_max'),
         Index('idx_offer_status_currency', 'status', 'currency'),
     )
+    
+    @property
+    def remaining_amount(self) -> Decimal:
+        """Compute remaining amount (MUST NEVER go below 0)"""
+        remaining = self.max_amount - self.invested_amount
+        return max(remaining, Decimal('0'))
 
 
 class OfferInvestment(BaseModel):
@@ -95,5 +115,49 @@ class OfferInvestment(BaseModel):
         Index('idx_offer_investments_offer_user', 'offer_id', 'user_id'),
         Index('idx_offer_investments_offer_status', 'offer_id', 'status'),
         Index('idx_offer_investments_user_status', 'user_id', 'status'),
+    )
+
+
+class InvestmentIntent(BaseModel):
+    """
+    InvestmentIntent model (v1.1) - Represents a user's investment intent in an offer
+    
+    Lifecycle:
+    - PENDING: Intent created, waiting for allocation
+    - CONFIRMED: Allocation successful, funds moved to LOCKED
+    - REJECTED: Allocation failed (offer full, insufficient funds, etc.)
+    
+    Features:
+    - requested_amount: Amount user wants to invest
+    - allocated_amount: Amount actually allocated (may be less if offer is near max_amount)
+    - status: PENDING, CONFIRMED, REJECTED
+    - idempotency_key: Prevents double-click duplication
+    - operation_id: Links to ledger operation that moved funds (only if CONFIRMED)
+    """
+    
+    __tablename__ = "investment_intents"
+    
+    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id", name="fk_investment_intents_offer_id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", name="fk_investment_intents_user_id"), nullable=False, index=True)
+    requested_amount = Column(Numeric(24, 8), nullable=False)
+    allocated_amount = Column(Numeric(24, 8), nullable=False, default=0)  # Amount actually allocated
+    currency = Column(String(3), nullable=False, default="AED")
+    status = Column(SQLEnum(InvestmentIntentStatus, name="investment_intent_status", create_constraint=True), nullable=False, default=InvestmentIntentStatus.PENDING, index=True)
+    idempotency_key = Column(String(255), nullable=True, unique=True, index=True)  # Prevents double-click duplication
+    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", name="fk_investment_intents_operation_id"), nullable=True, index=True)  # Link to ledger operation (only if CONFIRMED)
+    
+    # Relationships
+    offer = relationship("Offer", back_populates="investment_intents")
+    user = relationship("User", foreign_keys=[user_id])
+    operation = relationship("Operation", foreign_keys=[operation_id])
+    
+    # Table-level constraints
+    __table_args__ = (
+        CheckConstraint('requested_amount > 0', name='check_intent_requested_amount_positive'),
+        CheckConstraint('allocated_amount >= 0', name='check_intent_allocated_amount_non_negative'),
+        CheckConstraint('allocated_amount <= requested_amount', name='check_intent_allocated_not_exceed_requested'),
+        Index('idx_investment_intents_offer_user', 'offer_id', 'user_id'),
+        Index('idx_investment_intents_offer_status', 'offer_id', 'status'),
+        Index('idx_investment_intents_user_status', 'user_id', 'status'),
     )
 

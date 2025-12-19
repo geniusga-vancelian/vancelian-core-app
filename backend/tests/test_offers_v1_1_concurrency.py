@@ -643,3 +643,89 @@ def test_offer_closed_rejection(
     ).first()
     
     assert rejected_intent is not None, "REJECTED intent should be created when offer is CLOSED"
+
+
+def test_invest_255_aed_regression(db_session: Session, setup_user_with_balance):
+    """
+    Regression test for the 500 error fix (amount=255 AED).
+    
+    This test ensures that:
+    - Investment with amount=255 AED works correctly
+    - InvestmentIntent is created with CONFIRMED status
+    - Ledger movement AVAILABLE -> LOCKED is correct
+    - invested_amount is increased by allocated_amount
+    - created_at is automatically set by the database
+    """
+    user, available_account, locked_account = setup_user_with_balance(db_session)
+    
+    # Create a LIVE offer with enough capacity
+    offer = Offer(
+        code="REGRESSION-TEST-001",
+        name="Regression Test Offer",
+        description="Test offer for 255 AED investment",
+        currency="AED",
+        max_amount=Decimal("100000.00"),
+        invested_amount=Decimal("0.00"),
+        committed_amount=Decimal("0.00"),
+        status=OfferStatus.LIVE,
+    )
+    db_session.add(offer)
+    db_session.commit()
+    db_session.refresh(offer)
+    
+    # Invest 255 AED
+    investment_amount = Decimal("255.00")
+    idempotency_key = f"regression-test-{uuid4()}"
+    
+    intent, remaining_after = invest_in_offer_v1_1(
+        db=db_session,
+        user_id=user.id,
+        offer_id=offer.id,
+        amount=investment_amount,
+        currency="AED",
+        idempotency_key=idempotency_key,
+    )
+    
+    db_session.commit()
+    db_session.refresh(intent)
+    db_session.refresh(offer)
+    
+    # Verify InvestmentIntent
+    assert intent.status == InvestmentIntentStatus.CONFIRMED, "Intent should be CONFIRMED"
+    assert intent.allocated_amount == investment_amount, f"Allocated amount should be {investment_amount}"
+    assert intent.requested_amount == investment_amount, f"Requested amount should be {investment_amount}"
+    assert intent.created_at is not None, "created_at should be automatically set by database"
+    assert intent.operation_id is not None, "operation_id should be set for CONFIRMED intent"
+    
+    # Verify offer.invested_amount increased
+    assert offer.invested_amount == investment_amount, f"Offer invested_amount should be {investment_amount}"
+    
+    # Verify remaining_after
+    expected_remaining = offer.max_amount - investment_amount
+    assert remaining_after == expected_remaining, f"Remaining should be {expected_remaining}"
+    
+    # Verify ledger movement: AVAILABLE -> LOCKED
+    from app.core.ledger.models import LedgerEntry, LedgerEntryType
+    
+    available_entries = db_session.query(LedgerEntry).filter(
+        LedgerEntry.account_id == available_account.id,
+        LedgerEntry.operation_id == intent.operation_id
+    ).all()
+    
+    locked_entries = db_session.query(LedgerEntry).filter(
+        LedgerEntry.account_id == locked_account.id,
+        LedgerEntry.operation_id == intent.operation_id
+    ).all()
+    
+    # AVAILABLE account should have a negative entry (debit)
+    available_debit = sum(entry.amount for entry in available_entries if entry.amount < 0)
+    assert available_debit == -investment_amount, f"AVAILABLE should be debited by {investment_amount}"
+    
+    # LOCKED account should have a positive entry (credit)
+    locked_credit = sum(entry.amount for entry in locked_entries if entry.amount > 0)
+    assert locked_credit == investment_amount, f"LOCKED should be credited by {investment_amount}"
+    
+    # Verify double-entry: total debits == total credits
+    total_debits = abs(available_debit)
+    total_credits = locked_credit
+    assert total_debits == total_credits, "Ledger must maintain double-entry accounting"

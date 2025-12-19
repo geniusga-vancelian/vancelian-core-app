@@ -293,5 +293,54 @@ export const offersAdminApi = {
       method: 'POST',
     })
   },
+
+  /**
+   * List investments for an offer (paginated)
+   */
+  listOfferInvestments: async (
+    offerId: string,
+    params?: { limit?: number; offset?: number; status?: 'ALL' | 'PENDING' | 'CONFIRMED' | 'REJECTED' }
+  ): Promise<{
+    items: Array<{
+      id: string
+      offer_id: string
+      user_id: string
+      user_email: string
+      requested_amount: string
+      allocated_amount: string
+      currency: string
+      status: 'PENDING' | 'CONFIRMED' | 'REJECTED'
+      created_at: string
+      updated_at?: string
+      idempotency_key?: string
+    }>
+    limit: number
+    offset: number
+    total: number
+  }> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    queryParams.append('limit', String(params?.limit || 50))
+    queryParams.append('offset', String(params?.offset || 0))
+    
+    return apiRequest<{
+      items: Array<{
+        id: string
+        offer_id: string
+        user_id: string
+        user_email: string
+        requested_amount: string
+        allocated_amount: string
+        currency: string
+        status: 'PENDING' | 'CONFIRMED' | 'REJECTED'
+        created_at: string
+        updated_at?: string
+        idempotency_key?: string
+      }>
+      limit: number
+      offset: number
+      total: number
+    }>(`admin/v1/offers/${offerId}/investments?${queryParams.toString()}`)
+  },
 }
 

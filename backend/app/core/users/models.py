@@ -40,4 +40,5 @@ class User(BaseModel):
     accounts = relationship("Account", back_populates="user", lazy="select")
     transactions = relationship("Transaction", back_populates="user", lazy="select")
     offer_investments = relationship("OfferInvestment", foreign_keys="OfferInvestment.user_id", lazy="select")
+    investment_intents = relationship("InvestmentIntent", foreign_keys="InvestmentIntent.user_id", lazy="select")
 

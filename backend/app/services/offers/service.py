@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.offers.models import Offer, OfferInvestment, OfferStatus, OfferInvestmentStatus
-from app.core.ledger.models import OperationType
+from app.core.ledger.models import Operation, OperationType
 from app.core.transactions.models import Transaction, TransactionType, TransactionStatus
 from app.services.fund_services import lock_funds_for_investment, InsufficientBalanceError, ValidationError
 from app.services.transaction_engine import recompute_transaction_status
@@ -43,50 +43,45 @@ def invest_in_offer(
     amount: Decimal,
     currency: str,
     idempotency_key: str | None = None,
-) -> OfferInvestment:
+) -> tuple[OfferInvestment, Decimal]:
     """
     Invest in an offer with concurrency-safe cap enforcement.
     
     Rules:
-    1. Lock the offer row with SELECT ... FOR UPDATE
-    2. Validate offer.status == LIVE and currency matches
-    3. Compute remaining = max_amount - committed_amount
-    4. accepted = min(amount, remaining)
-    5. Create OfferInvestment with status ACCEPTED/REJECTED
-    6. Increase offer.committed_amount += accepted
-    7. Move funds ONLY for accepted amount (AVAILABLE -> LOCKED)
-    8. Idempotency: if idempotency_key exists, return existing investment
+    1. Lock the offer row with SELECT ... FOR UPDATE (DB-level row lock)
+    2. Check idempotency AFTER lock (within same transaction)
+    3. Validate offer.status == LIVE and currency matches
+    4. Compute remaining = max_amount - committed_amount
+    5. If remaining <= 0 => raise OfferFullError (409)
+    6. accepted = min(amount, remaining) (auto-cap)
+    7. Create OfferInvestment with status ACCEPTED/REJECTED
+    8. Increase offer.committed_amount += accepted
+    9. Move funds ONLY for accepted amount (AVAILABLE -> LOCKED)
+    10. All writes in ONE DB transaction (caller must commit)
     
     Returns:
-        OfferInvestment with accepted_amount and status
+        Tuple of (OfferInvestment, remaining_after)
+        - OfferInvestment with accepted_amount and status
+        - remaining_after: remaining capacity after this investment
     
     Raises:
-        OfferNotFoundError: Offer not found
-        OfferNotLiveError: Offer not in LIVE status
-        OfferCurrencyMismatchError: Currency mismatch
-        OfferFullError: No remaining capacity
-        InsufficientBalanceError: User doesn't have enough funds
-        ValidationError: Invalid amount or other validation error
+        ValidationError: Invalid amount (amount <= 0) => 400
+        OfferNotFoundError: Offer not found => 404
+        OfferNotLiveError: Offer not in LIVE status => 409
+        OfferCurrencyMismatchError: Currency mismatch => 409
+        OfferFullError: No remaining capacity (remaining <= 0) => 409
+        InsufficientBalanceError: User doesn't have enough funds => 409
+    
+    Note:
+        - Caller MUST commit the transaction
+        - All writes are atomic within this function
+        - Idempotency is checked AFTER lock to prevent race conditions
     """
     # Validate amount
     if amount <= 0:
         raise ValidationError("Amount must be greater than 0")
     
-    # Check idempotency first (before locking)
-    if idempotency_key:
-        existing_investment = db.query(OfferInvestment).filter(
-            OfferInvestment.idempotency_key == idempotency_key
-        ).first()
-        if existing_investment:
-            # If investment exists, check if transaction was created
-            if existing_investment.operation_id:
-                operation = db.query(Operation).filter(Operation.id == existing_investment.operation_id).first()
-                if operation and operation.transaction_id:
-                    # Transaction already exists, return existing investment
-                    return existing_investment
-            return existing_investment
-    
-    # Lock offer row for update (concurrency-safe)
+    # Lock offer row for update FIRST (concurrency-safe)
     offer = db.execute(
         select(Offer)
         .where(Offer.id == offer_id)
@@ -95,6 +90,17 @@ def invest_in_offer(
     
     if not offer:
         raise OfferNotFoundError(f"Offer {offer_id} not found")
+    
+    # Check idempotency AFTER lock (within same transaction)
+    # This prevents race conditions where two requests with same key arrive simultaneously
+    if idempotency_key:
+        existing_investment = db.query(OfferInvestment).filter(
+            OfferInvestment.idempotency_key == idempotency_key
+        ).first()
+        if existing_investment:
+            # Return existing investment + compute remaining_after
+            remaining_after = offer.max_amount - offer.committed_amount
+            return existing_investment, remaining_after
     
     # Validate offer status
     if offer.status != OfferStatus.LIVE:
@@ -127,7 +133,7 @@ def invest_in_offer(
         db.flush()
         raise OfferCurrencyMismatchError(f"Offer currency {offer.currency} does not match request {currency}")
     
-    # Compute remaining capacity
+    # Compute remaining capacity (while holding lock)
     remaining = offer.max_amount - offer.committed_amount
     
     if remaining <= 0:
@@ -145,7 +151,7 @@ def invest_in_offer(
         db.flush()
         raise OfferFullError("Offer has reached max_amount")
     
-    # Compute accepted amount (partial fill on last investor)
+    # Compute accepted amount (auto-cap: partial fill on last investor)
     accepted = min(amount, remaining)
     
     # Create Transaction record for user-facing transaction history
@@ -211,17 +217,16 @@ def invest_in_offer(
     db.add(investment)
     db.flush()
     
-    # Update offer committed amount
+    # Update offer committed amount (while still holding lock)
     offer.committed_amount += accepted
     db.add(offer)
     db.flush()
     
-    # Commit transaction
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise ValidationError("Investment creation failed due to constraint violation")
+    # Compute remaining_after for response
+    remaining_after = offer.max_amount - offer.committed_amount
     
-    return investment
+    # Note: Caller MUST commit the transaction
+    # All writes are atomic within this function
+    
+    return investment, remaining_after
 

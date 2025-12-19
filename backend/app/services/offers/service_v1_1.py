@@ -196,6 +196,7 @@ def invest_in_offer_v1_1(
         remaining = Decimal('0')
     
     # Create InvestmentIntent with status PENDING (before allocation)
+    # Note: created_at is set automatically by BaseModel via server_default=func.now()
     intent = InvestmentIntent(
         offer_id=offer_id,
         user_id=user_id,
