@@ -96,11 +96,17 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
       errorData.message = response.statusText || errorData.message
     }
     
+    // Backend returns {error: {code, message, trace_id}}, extract nested error object
+    const error = errorData.error || errorData
+    const message = error.message || error.detail || errorData.message || `API request failed for ${endpoint}`
+    const code = error.code || errorData.code
+    const trace_id = error.trace_id || errorData.trace_id
+    
     throw {
-      message: errorData.message || errorData.detail || `API request failed for ${endpoint}`,
-      code: errorData.code,
+      message,
+      code,
       status: response.status,
-      trace_id: errorData.trace_id,
+      trace_id,
       endpoint: endpoint,
     }
   }
