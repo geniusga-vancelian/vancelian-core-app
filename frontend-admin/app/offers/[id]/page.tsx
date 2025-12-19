@@ -88,6 +88,8 @@ export default function OfferDetailPage() {
 
   // Storage status
   const [storageEnabled, setStorageEnabled] = useState<boolean | null>(null)
+  const [storageLoading, setStorageLoading] = useState(false)
+  const [storageError, setStorageError] = useState<string | null>(null)
 
   useEffect(() => {
     if (offerId) {
@@ -100,12 +102,18 @@ export default function OfferDetailPage() {
   }, [offerId, investmentStatusFilter])
 
   const loadStorageStatus = async () => {
+    setStorageLoading(true)
+    setStorageError(null)
     try {
       const info = await systemApi.getStorageInfo()
       setStorageEnabled(info.enabled)
-    } catch (err) {
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setStorageError(apiError.message || "Failed to check storage status")
       // If we can't check storage status, assume it's not configured
       setStorageEnabled(false)
+    } finally {
+      setStorageLoading(false)
     }
   }
 
@@ -323,6 +331,12 @@ export default function OfferDetailPage() {
 
   // Media upload handlers
   const handleMediaUpload = async (files: FileList | null, type: 'IMAGE' | 'VIDEO') => {
+    // Guard: don't proceed if storage is not enabled
+    if (storageEnabled === false) {
+      setMediaError("Storage is not configured. Please configure S3/R2 storage to enable uploads.")
+      return
+    }
+    
     if (!files || files.length === 0 || !offerId) return
     
     setUploadingMedia(true)
@@ -835,23 +849,44 @@ export default function OfferDetailPage() {
               onChange={(e) => handleMediaUpload(e.target.files, 'VIDEO')}
             />
             <button
-              onClick={() => mediaFileInputRef.current?.click()}
-              disabled={uploadingMedia || storageEnabled === false}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+              onClick={() => {
+                if (storageEnabled === false) return
+                mediaFileInputRef.current?.click()
+              }}
+              disabled={uploadingMedia || storageLoading || storageEnabled === false}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              title={storageEnabled === false ? "Storage not configured (S3/R2). Configure env vars to enable uploads." : undefined}
             >
               {uploadingMedia ? "Uploading..." : "Upload Images"}
             </button>
             <button
-              onClick={() => videoFileInputRef.current?.click()}
-              disabled={uploadingMedia || storageEnabled === false}
-              className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 text-sm"
+              onClick={() => {
+                if (storageEnabled === false) return
+                videoFileInputRef.current?.click()
+              }}
+              disabled={uploadingMedia || storageLoading || storageEnabled === false}
+              className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              title={storageEnabled === false ? "Storage not configured (S3/R2). Configure env vars to enable uploads." : undefined}
             >
               {uploadingMedia ? "Uploading..." : "Add Promo Video"}
             </button>
           </div>
         </div>
 
-        {storageEnabled === false && (
+        {storageLoading && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+            <div className="text-sm text-gray-600">Checking storage configuration...</div>
+          </div>
+        )}
+
+        {storageError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium mb-1">⚠️ Storage check failed</div>
+            <div className="text-sm text-red-700">{storageError}</div>
+          </div>
+        )}
+
+        {storageEnabled === false && !storageLoading && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
             <div className="text-yellow-800 font-medium mb-1">⚠️ Storage not configured</div>
             <div className="text-sm text-yellow-700">
@@ -987,15 +1022,32 @@ export default function OfferDetailPage() {
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Documents</h2>
           <button
-            onClick={() => setShowDocumentForm(!showDocumentForm)}
-            disabled={storageEnabled === false}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+            onClick={() => {
+              if (storageEnabled === false) return
+              setShowDocumentForm(!showDocumentForm)
+            }}
+            disabled={storageLoading || storageEnabled === false}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            title={storageEnabled === false ? "Storage not configured (S3/R2). Configure env vars to enable uploads." : undefined}
           >
             {showDocumentForm ? "Cancel" : "Add Document"}
           </button>
         </div>
 
-        {storageEnabled === false && (
+        {storageLoading && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+            <div className="text-sm text-gray-600">Checking storage configuration...</div>
+          </div>
+        )}
+
+        {storageError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium mb-1">⚠️ Storage check failed</div>
+            <div className="text-sm text-red-700">{storageError}</div>
+          </div>
+        )}
+
+        {storageEnabled === false && !storageLoading && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
             <div className="text-yellow-800 font-medium mb-1">⚠️ Storage not configured</div>
             <div className="text-sm text-yellow-700">
