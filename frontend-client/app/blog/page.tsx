@@ -98,9 +98,6 @@ export default function BlogPage() {
                 )}
                 <div className="p-6">
                   <h3 className="text-xl font-semibold mb-2 line-clamp-2">{article.title}</h3>
-                  {article.subtitle && (
-                    <p className="text-gray-600 text-sm mb-2 line-clamp-2">{article.subtitle}</p>
-                  )}
                   {article.excerpt && (
                     <p className="text-gray-500 text-sm mb-4 line-clamp-3">{article.excerpt}</p>
                   )}
@@ -161,9 +158,6 @@ export default function BlogPage() {
             )}
             <div className="p-6">
               <h3 className="text-xl font-semibold mb-2 line-clamp-2">{article.title}</h3>
-              {article.subtitle && (
-                <p className="text-gray-600 text-sm mb-2 line-clamp-2">{article.subtitle}</p>
-              )}
               {article.excerpt && (
                 <p className="text-gray-500 text-sm mb-4 line-clamp-3">{article.excerpt}</p>
               )}

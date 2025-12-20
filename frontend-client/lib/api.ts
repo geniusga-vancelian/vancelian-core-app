@@ -66,14 +66,16 @@ async function parseJsonSafe(res: Response): Promise<any | null> {
     return null
   }
 
-  // Check content-length header if present
-  const contentLength = res.headers.get('content-length')
-  if (contentLength === '0') {
-    return null
+  // Check content-length header if present (ensure headers exists)
+  if (res.headers) {
+    const contentLength = res.headers.get('content-length')
+    if (contentLength === '0') {
+      return null
+    }
   }
 
-  // Check content-type header
-  const contentType = res.headers.get('content-type') || ''
+  // Check content-type header (ensure headers exists)
+  const contentType = res.headers?.get('content-type') || ''
   if (!contentType.includes('application/json')) {
     // Not JSON, try to read as text
     const text = await res.text()

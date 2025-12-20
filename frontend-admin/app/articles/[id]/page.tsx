@@ -4,6 +4,8 @@ import { useEffect, useState, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { articlesAdminApi, offersAdminApi, systemApi, parseApiError, type Article, type UpdateArticlePayload, type Offer } from "@/lib/api"
+import { MarkdownProse } from "@/components/MarkdownProse"
+import { insertAtCursor } from "@/utils/markdownEditor"
 
 export default function ArticleDetailPage() {
   const router = useRouter()
@@ -36,6 +38,7 @@ export default function ArticleDetailPage() {
   const imageFileInputRef = useRef<HTMLInputElement>(null)
   const videoFileInputRef = useRef<HTMLInputElement>(null)
   const documentFileInputRef = useRef<HTMLInputElement>(null)
+  const markdownTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Offers linking state
   const [availableOffers, setAvailableOffers] = useState<Offer[]>([])
@@ -268,6 +271,25 @@ export default function ArticleDetailPage() {
     return colors[status as keyof typeof colors] || "bg-gray-100 text-gray-800"
   }
 
+  const handleInsertMediaIntoContent = (mediaItem: { type: string; url?: string; id: string }) => {
+    if (!markdownTextareaRef.current || !mediaItem.url) {
+      return
+    }
+
+    let markdown = ""
+    if (mediaItem.type === 'image') {
+      markdown = `![alt text](${mediaItem.url})\n`
+    } else if (mediaItem.type === 'video') {
+      markdown = `${mediaItem.url}\n`
+    } else if (mediaItem.type === 'document') {
+      markdown = `[Download document](${mediaItem.url})\n`
+    }
+
+    if (markdown) {
+      insertAtCursor(markdownTextareaRef.current, markdown)
+    }
+  }
+
   const formatDateTime = (dateString: string | undefined): string => {
     if (!dateString) return "-"
     try {
@@ -355,6 +377,14 @@ export default function ArticleDetailPage() {
               Archive
             </button>
           )}
+          {article.status === 'archived' && (
+            <button
+              onClick={() => handleStatusAction('publish')}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+            >
+              Republish
+            </button>
+          )}
           <button
             onClick={() => setEditing(!editing)}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
@@ -406,13 +436,117 @@ export default function ArticleDetailPage() {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Content (Markdown)</label>
-              <textarea
-                value={editForm.content_markdown || ""}
-                onChange={(e) => setEditForm({ ...editForm, content_markdown: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md font-mono text-sm"
-                rows={12}
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-2">Content (Markdown)</label>
+              
+              {/* Toolbar */}
+              <div className="flex flex-wrap gap-2 mb-2 p-2 bg-gray-50 rounded-t-lg border border-gray-300 border-b-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (markdownTextareaRef.current) {
+                      insertAtCursor(markdownTextareaRef.current, "", "## ", undefined, "## ")
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-100"
+                  title="Heading 2"
+                >
+                  H2
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (markdownTextareaRef.current) {
+                      insertAtCursor(markdownTextareaRef.current, "", "**", "**")
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-100 font-bold"
+                  title="Bold"
+                >
+                  <strong>B</strong>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (markdownTextareaRef.current) {
+                      insertAtCursor(markdownTextareaRef.current, "", "*", "*")
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-100 italic"
+                  title="Italic"
+                >
+                  <em>I</em>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = prompt("Enter URL:")
+                    const text = prompt("Enter link text:", "") || url || ""
+                    if (url && markdownTextareaRef.current) {
+                      insertAtCursor(markdownTextareaRef.current, `[${text}](${url})`)
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-100"
+                  title="Link"
+                >
+                  Link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (markdownTextareaRef.current) {
+                      insertAtCursor(markdownTextareaRef.current, "", "- ", undefined, "- ")
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-100"
+                  title="Bullet List"
+                >
+                  • List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (markdownTextareaRef.current) {
+                      insertAtCursor(markdownTextareaRef.current, "", "> ", undefined, "> ")
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-100"
+                  title="Quote"
+                >
+                  Quote
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (markdownTextareaRef.current) {
+                      insertAtCursor(markdownTextareaRef.current, "\n---\n")
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-100"
+                  title="Divider"
+                >
+                  ───
+                </button>
+              </div>
+
+              {/* Editor + Preview side-by-side */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Editor */}
+                <div className="border border-gray-300 rounded-b-lg">
+                  <textarea
+                    ref={markdownTextareaRef}
+                    value={editForm.content_markdown || ""}
+                    onChange={(e) => setEditForm({ ...editForm, content_markdown: e.target.value })}
+                    className="w-full h-[600px] px-3 py-2 border-0 rounded-b-lg font-mono text-sm resize-none focus:outline-none"
+                    placeholder="Write your markdown here..."
+                  />
+                </div>
+
+                {/* Live Preview */}
+                <div className="border border-gray-300 rounded-lg p-4 bg-white overflow-y-auto h-[600px]">
+                  <div className="text-xs text-gray-500 mb-2 font-semibold">LIVE PREVIEW</div>
+                  <MarkdownProse content={editForm.content_markdown || ""} />
+                </div>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -562,6 +696,13 @@ export default function ArticleDetailPage() {
                 )}
                 <div className="mt-2 flex gap-2">
                   <button
+                    onClick={() => handleInsertMediaIntoContent(coverMedia)}
+                    className="text-sm text-blue-600 hover:text-blue-800"
+                    disabled={!coverMedia.url}
+                  >
+                    Insert into Content
+                  </button>
+                  <button
                     onClick={() => handleDeleteMedia(coverMedia.id)}
                     className="text-sm text-red-600 hover:text-red-800"
                   >
@@ -580,6 +721,13 @@ export default function ArticleDetailPage() {
                   <video src={promoVideoMedia.url} controls className="w-full rounded" />
                 )}
                 <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => handleInsertMediaIntoContent(promoVideoMedia)}
+                    className="text-sm text-blue-600 hover:text-blue-800"
+                    disabled={!promoVideoMedia.url}
+                  >
+                    Insert into Content
+                  </button>
                   <button
                     onClick={() => handleDeleteMedia(promoVideoMedia.id)}
                     className="text-sm text-red-600 hover:text-red-800"
@@ -602,7 +750,14 @@ export default function ArticleDetailPage() {
                       {item.type === 'video' && item.url && (
                         <video src={item.url} className="w-full h-32 object-cover rounded" />
                       )}
-                      <div className="mt-2 flex gap-2">
+                      <div className="mt-2 flex gap-2 flex-wrap">
+                        <button
+                          onClick={() => handleInsertMediaIntoContent(item)}
+                          className="text-xs text-green-600 hover:text-green-800"
+                          disabled={!item.url}
+                        >
+                          Insert
+                        </button>
                         {item.type === 'image' && (
                           <button
                             onClick={() => handleSetCover(item.id)}
@@ -639,12 +794,21 @@ export default function ArticleDetailPage() {
                   {documentMedia.map((item) => (
                     <div key={item.id} className="flex items-center justify-between p-2 border border-gray-200 rounded">
                       <span className="text-sm">{item.mime_type} ({formatFileSize(item.size_bytes)})</span>
-                      <button
-                        onClick={() => handleDeleteMedia(item.id)}
-                        className="text-sm text-red-600 hover:text-red-800"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleInsertMediaIntoContent(item)}
+                          className="text-sm text-green-600 hover:text-green-800"
+                          disabled={!item.url}
+                        >
+                          Insert
+                        </button>
+                        <button
+                          onClick={() => handleDeleteMedia(item.id)}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

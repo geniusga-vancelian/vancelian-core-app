@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { articlesApi, parseApiError, type ArticleDetail } from "@/lib/api"
+import { MarkdownProse } from "@/components/MarkdownProse"
 
 export default function ArticleDetailPage() {
   const params = useParams()
@@ -48,24 +49,6 @@ export default function ArticleDetailPage() {
     }
   }
 
-  // Simple markdown to HTML converter (basic implementation)
-  const renderMarkdown = (markdown: string | null | undefined): string => {
-    if (!markdown) return ""
-    
-    // Very basic markdown rendering (for V1)
-    // In production, use a library like marked or react-markdown
-    let html = markdown
-      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-      .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
-      .replace(/\*(.*?)\*/gim, '<em>$1</em>')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      .replace(/\n\n/gim, '</p><p>')
-      .replace(/\n/gim, '<br />')
-    
-    return `<p>${html}</p>`
-  }
 
   if (loading) {
     return (
@@ -86,7 +69,7 @@ export default function ArticleDetailPage() {
   }
 
   return (
-    <main className="container mx-auto px-4 py-8 max-w-4xl">
+    <main className="max-w-5xl mx-auto px-4 py-10">
       <div className="mb-6">
         <Link href="/blog" className="text-blue-600 hover:underline text-sm">
           ← Back to Blog
@@ -96,22 +79,20 @@ export default function ArticleDetailPage() {
       <article>
         {/* Header */}
         <header className="mb-8">
-          <h1 className="text-4xl font-bold mb-4">{article.title}</h1>
-          {article.subtitle && (
-            <p className="text-xl text-gray-600 mb-4">{article.subtitle}</p>
-          )}
+          <h1 className="text-3xl font-semibold mb-4">{article.title}</h1>
           
-          <div className="flex items-center gap-4 text-sm text-gray-500 mb-6">
-            {article.author_name && <span>By {article.author_name}</span>}
-            {article.published_at && <span>{formatDate(article.published_at)}</span>}
-          </div>
+          {/* Excerpt - juste en dessous du titre */}
+          {article.excerpt && (
+            <p className="text-xl text-gray-600 mb-4">{article.excerpt}</p>
+          )}
 
+          {/* Tags - entre l'excerpt et l'image */}
           {article.tags.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-6">
               {article.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+                  className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm border border-gray-200"
                 >
                   {tag}
                 </span>
@@ -122,14 +103,20 @@ export default function ArticleDetailPage() {
 
         {/* Cover Image */}
         {article.media?.cover && (
-          <div className="mb-8">
+          <div className="mb-6">
             <img
               src={article.media.cover.url}
               alt={article.title}
-              className="w-full h-96 object-cover rounded-lg"
+              className="w-full h-96 object-cover rounded-xl"
             />
           </div>
         )}
+
+        {/* Author and Date - après l'image */}
+        <div className="flex items-center gap-4 text-sm text-gray-500 mb-8">
+          {article.author_name && <span>By {article.author_name}</span>}
+          {article.published_at && <span>{formatDate(article.published_at)}</span>}
+        </div>
 
         {/* Promo Video */}
         {article.media?.promo_video && (
@@ -137,17 +124,17 @@ export default function ArticleDetailPage() {
             <video
               src={article.media.promo_video.url}
               controls
-              className="w-full rounded-lg"
+              className="w-full rounded-xl"
             />
           </div>
         )}
 
-        {/* Content */}
-        <div className="prose max-w-none mb-8">
-          {article.content_html ? (
-            <div dangerouslySetInnerHTML={{ __html: article.content_html }} />
-          ) : article.content_markdown ? (
-            <div dangerouslySetInnerHTML={{ __html: renderMarkdown(article.content_markdown) }} />
+        {/* Content - using MarkdownProse */}
+        <div className="mb-8">
+          {article.content_markdown ? (
+            <MarkdownProse content={article.content_markdown} />
+          ) : article.content_html ? (
+            <div className="prose prose-lg max-w-none" dangerouslySetInnerHTML={{ __html: article.content_html }} />
           ) : (
             <p className="text-gray-500 italic">No content available.</p>
           )}
