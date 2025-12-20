@@ -6,7 +6,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { getApiUrl } from "@/lib/config"
+import { getApiUrl, getApiBaseUrl } from "@/lib/config"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -22,7 +22,7 @@ export default function LoginPage() {
 
     try {
       // Use centralized config
-      const { getApiUrl } = await import('@/lib/config')
+      const apiBaseUrl = getApiBaseUrl()
       // Trim email and password to avoid whitespace issues
       const trimmedEmail = email.trim()
       const trimmedPassword = password.trim()
