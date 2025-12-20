@@ -72,7 +72,8 @@ CORS_ALLOW_ORIGINS=http://localhost:3000,http://localhost:3001,https://app.examp
 | `S3_REGION` | No | `auto` | Region (`auto` for R2, or AWS region like `eu-west-1`) |
 | `S3_PUBLIC_BASE_URL` | No | - | Public CDN base URL (optional, for direct access) |
 | `S3_PRESIGN_EXPIRES_SECONDS` | No | `900` | Presigned URL expiration (seconds) |
-| `S3_KEY_PREFIX` | No | `offers` | Prefix for all object keys |
+| `S3_KEY_PREFIX` | No | `offers` | Prefix for offer media object keys |
+| `ARTICLES_KEY_PREFIX` | No | `articles` | Prefix for article media object keys |
 | `S3_MAX_DOCUMENT_SIZE` | No | `52428800` | Max document size (bytes, default: 50MB) |
 | `S3_MAX_VIDEO_SIZE` | No | `209715200` | Max video size (bytes, default: 200MB) |
 | `S3_MAX_IMAGE_SIZE` | No | `10485760` | Max image size (bytes, default: 10MB) |

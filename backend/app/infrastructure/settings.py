@@ -3,7 +3,7 @@ Application settings using pydantic-settings
 """
 
 from functools import lru_cache
-from typing import List, Union
+from typing import List, Union, Optional
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -111,6 +111,7 @@ class Settings(BaseSettings):
     S3_PUBLIC_BASE_URL: str = ""  # Optional: CDN/public base URL (e.g., https://cdn.example.com)
     S3_PRESIGN_EXPIRES_SECONDS: int = 900  # Presigned URL expiration (default: 15 minutes)
     S3_KEY_PREFIX: str = "offers"  # Prefix for all object keys (e.g., "offers/{offer_id}/...")
+    ARTICLES_KEY_PREFIX: str = "articles"  # Prefix for article media keys (default: "articles", fallback if not set)
     
     # Upload size limits (in bytes)
     S3_MAX_DOCUMENT_SIZE: int = 50 * 1024 * 1024  # 50MB default
@@ -231,6 +232,30 @@ class Settings(BaseSettings):
         
         # For AWS, basic config is enough
         return has_basic_config
+    
+    def get_storage_disabled_reason(self) -> Optional[str]:
+        """
+        Get reason why storage is disabled (for diagnostics).
+        Returns None if storage is enabled.
+        """
+        if self.storage_enabled:
+            return None
+        
+        missing = []
+        if not self.S3_BUCKET or not self.S3_BUCKET.strip():
+            missing.append("S3_BUCKET")
+        if not self.S3_ACCESS_KEY_ID or not self.S3_ACCESS_KEY_ID.strip():
+            missing.append("S3_ACCESS_KEY_ID")
+        if not self.S3_SECRET_ACCESS_KEY or not self.S3_SECRET_ACCESS_KEY.strip():
+            missing.append("S3_SECRET_ACCESS_KEY")
+        if self.S3_ENDPOINT_URL and not self.S3_ENDPOINT_URL.strip():
+            missing.append("S3_ENDPOINT_URL (empty)")
+        elif self.S3_ENDPOINT_URL and not self.S3_ENDPOINT_URL.startswith("https://"):
+            missing.append("S3_ENDPOINT_URL (invalid format)")
+        
+        if missing:
+            return f"Missing or empty: {', '.join(missing)}"
+        return "Unknown configuration issue"
 
 
 @lru_cache()

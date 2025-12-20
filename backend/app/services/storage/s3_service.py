@@ -139,6 +139,44 @@ class S3Service:
         
         return key
     
+    def build_article_object_key(
+        self,
+        article_id: UUID,
+        file_name: str,
+        upload_type: str,  # "image", "video", or "document"
+    ) -> str:
+        """
+        Build S3 object key for article media with prefix and article_id
+        
+        Args:
+            article_id: Article UUID
+            upload_type: "image", "video", or "document"
+            file_name: Original file name (will be sanitized)
+        
+        Returns:
+            Full S3 object key (e.g., "articles/{article_id}/{upload_type}/{uuid}.{ext}")
+        """
+        import os
+        import re
+        import uuid as uuid_lib
+        
+        # Sanitize file name (remove path separators, keep only safe chars)
+        base_name = os.path.basename(file_name)
+        name_without_ext, ext = os.path.splitext(base_name)
+        safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', name_without_ext)
+        
+        # Use UUID for uniqueness (similar to how uploads work)
+        unique_id = str(uuid_lib.uuid4())[:8]
+        safe_name_with_ext = f"{safe_name}_{unique_id}{ext}"
+        
+        # Use ARTICLES_KEY_PREFIX if set, otherwise default to "articles"
+        prefix = getattr(self.settings, 'ARTICLES_KEY_PREFIX', 'articles')
+        
+        # Build key with prefix
+        key = f"{prefix}/{str(article_id)}/{upload_type}/{safe_name_with_ext}"
+        
+        return key
+    
     def validate_mime_type(self, mime_type: str, upload_type: str, media_type: Optional[str] = None) -> bool:
         """
         Validate MIME type based on upload type and media type

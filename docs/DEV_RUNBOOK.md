@@ -152,16 +152,75 @@ docker compose -f docker-compose.dev.yml restart backend
 # 1. Vérifier les variables storage
 grep S3_ .env.dev
 
-# 2. Storage est optionnel - si non configuré, les uploads seront désactivés
+# 2. Vérifier le statut storage via l'endpoint DEV (nécessite DEV_MODE=true)
+curl -H "Authorization: Bearer <token>" http://localhost:8000/admin/v1/system/storage-status
+
+# 3. Vérifier les logs au startup pour voir le statut storage
+docker compose -f docker-compose.dev.yml logs backend | grep STORAGE
+
+# 4. Storage est optionnel - si non configuré, les uploads seront désactivés
 # Vérifier le statut storage via l'audit
 make audit-runtime
 
-# 3. Si storage est requis, configurer dans .env.dev :
+# 5. Si storage est requis, configurer dans .env.dev :
+#    STORAGE_PROVIDER=s3
 #    S3_BUCKET=vancelian-dev
 #    S3_ACCESS_KEY_ID=...
 #    S3_SECRET_ACCESS_KEY=...
 #    S3_ENDPOINT_URL=https://...r2.cloudflarestorage.com
 #    S3_REGION=auto
+```
+
+### Vérification rapide des médias dans la base de données
+
+Pour vérifier rapidement l'état des médias dans la base de données :
+
+```bash
+# Compter les médias et les offres avec cover
+docker compose -f docker-compose.dev.yml exec postgres psql -U vancelian -d vancelian_core -c "
+SELECT 
+  (SELECT count(*) FROM offer_media) as offer_media_count,
+  (SELECT count(*) FROM offers WHERE cover_media_id IS NOT NULL) as offers_with_cover;
+"
+
+# Voir les 5 derniers objets offer_media
+docker compose -f docker-compose.dev.yml exec postgres psql -U vancelian -d vancelian_core -c "
+SELECT id, offer_id, type, key, created_at 
+FROM offer_media 
+ORDER BY created_at DESC 
+LIMIT 5;
+"
+```
+
+### Vérification rapide des articles dans la base de données
+
+Pour vérifier rapidement l'état des articles dans la base de données :
+
+```bash
+# Compter les articles et médias d'articles
+docker compose -f docker-compose.dev.yml exec postgres psql -U vancelian -d vancelian_core -c "
+SELECT 
+  (SELECT count(*) FROM articles) as articles_count,
+  (SELECT count(*) FROM articles WHERE status = 'published') as published_count,
+  (SELECT count(*) FROM article_media) as article_media_count,
+  (SELECT count(*) FROM article_offers) as article_offers_links;
+"
+
+# Voir les 5 derniers articles
+docker compose -f docker-compose.dev.yml exec postgres psql -U vancelian -d vancelian_core -c "
+SELECT id, slug, title, status, published_at, created_at 
+FROM articles 
+ORDER BY created_at DESC 
+LIMIT 5;
+"
+
+# Voir les 5 derniers médias d'articles
+docker compose -f docker-compose.dev.yml exec postgres psql -U vancelian -d vancelian_core -c "
+SELECT id, article_id, type, key, created_at 
+FROM article_media 
+ORDER BY created_at DESC 
+LIMIT 5;
+"
 ```
 
 ### Backend ne démarre pas

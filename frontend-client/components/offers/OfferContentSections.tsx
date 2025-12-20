@@ -1,10 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Link from "next/link"
-import { getApiUrl } from "@/lib/config"
-import { getToken } from "@/lib/api"
-import type { Offer, DocumentItem } from "@/lib/api"
+import type { Offer } from "@/lib/api"
+import { OfferDocumentsList } from "./OfferDocumentsList"
 
 interface OfferContentSectionsProps {
   offer: Offer
@@ -13,52 +12,6 @@ interface OfferContentSectionsProps {
 
 export function OfferContentSections({ offer, relatedOffers = [] }: OfferContentSectionsProps) {
   const [showFullDescription, setShowFullDescription] = useState(false)
-  const [documentUrls, setDocumentUrls] = useState<Record<string, string>>({})
-  const [downloadingDocs, setDownloadingDocs] = useState<Record<string, boolean>>({})
-
-  // Fetch presigned URLs for documents without URLs
-  useEffect(() => {
-    const fetchPresignedUrls = async () => {
-      if (!offer.documents || offer.documents.length === 0) return
-      
-      const urls: Record<string, string> = {}
-      
-      // Fetch presigned URLs for documents without URLs
-      for (const doc of offer.documents) {
-        if (!doc.url && doc.id) {
-          try {
-            const token = getToken()
-            const response = await fetch(
-              getApiUrl(`api/v1/offers/${offer.id}/documents/${doc.id}/download`),
-              {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-              }
-            )
-            if (response.ok) {
-              const data = await response.json()
-              if (data.download_url) {
-                urls[doc.id] = data.download_url
-              }
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch presigned URL for document ${doc.id}:`, err)
-          }
-        } else if (doc.url) {
-          urls[doc.id] = doc.url
-        }
-      }
-      
-      setDocumentUrls(urls)
-    }
-    
-    fetchPresignedUrls()
-  }, [offer.documents, offer.id])
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
 
   // Use Marketing V1.1 fields from API (not metadata)
   const marketingWhy = offer.marketing_why || []
@@ -244,73 +197,10 @@ export function OfferContentSections({ offer, relatedOffers = [] }: OfferContent
       </section>
 
       {/* Documents */}
-      {offer.documents && offer.documents.length > 0 && (
+      {offer.media?.documents && offer.media.documents.length > 0 && (
         <section>
           <h2 className="text-2xl font-bold mb-4">Documents</h2>
-          <div className="space-y-2">
-            {offer.documents.map((doc: DocumentItem) => {
-              const docUrl = documentUrls[doc.id] || doc.url
-              const isDownloading = downloadingDocs[doc.id] || false
-              
-              const handleDownload = async () => {
-                if (!docUrl) {
-                  // Try to fetch presigned URL on demand
-                  setDownloadingDocs(prev => ({ ...prev, [doc.id]: true }))
-                  try {
-                    const token = getToken()
-                    const response = await fetch(
-                      getApiUrl(`api/v1/offers/${offer.id}/documents/${doc.id}/download`),
-                      {
-                        headers: token ? { Authorization: `Bearer ${token}` } : {},
-                      }
-                    )
-                    if (response.ok) {
-                      const data = await response.json()
-                      if (data.download_url) {
-                        // Update state and trigger download
-                        setDocumentUrls(prev => ({ ...prev, [doc.id]: data.download_url }))
-                        window.open(data.download_url, '_blank', 'noopener,noreferrer')
-                      }
-                    }
-                  } catch (err) {
-                    console.error(`Failed to download document ${doc.id}:`, err)
-                    alert('Failed to download document. Please try again.')
-                  } finally {
-                    setDownloadingDocs(prev => ({ ...prev, [doc.id]: false }))
-                  }
-                } else {
-                  // Direct download
-                  window.open(docUrl, '_blank', 'noopener,noreferrer')
-                }
-              }
-              
-              return (
-                <div
-                  key={doc.id}
-                  className="bg-white border border-gray-200 rounded-lg p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <span className="text-blue-600 font-semibold">📄</span>
-                    </div>
-                    <div>
-                      <div className="font-medium text-gray-900">{doc.name}</div>
-                      <div className="text-sm text-gray-500">
-                        {doc.kind} • {formatFileSize(doc.size_bytes)}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleDownload}
-                    disabled={isDownloading}
-                    className="text-blue-600 hover:text-blue-800 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {isDownloading ? 'Loading...' : 'Download'}
-                  </button>
-                </div>
-              )
-            })}
-          </div>
+          <OfferDocumentsList documents={offer.media.documents} />
         </section>
       )}
 
@@ -328,7 +218,7 @@ export function OfferContentSections({ offer, relatedOffers = [] }: OfferContent
               const relatedProgress = parseFloat(relatedOffer.max_amount) > 0
                 ? (parseFloat(relatedOffer.committed_amount) / parseFloat(relatedOffer.max_amount)) * 100
                 : 0
-              const relatedCover = relatedOffer.media?.find(m => m.type === 'IMAGE' && m.is_cover) || relatedOffer.media?.find(m => m.type === 'IMAGE')
+              const relatedCover = relatedOffer.media?.cover || relatedOffer.media?.gallery?.[0]
 
               return (
                 <Link
@@ -336,7 +226,7 @@ export function OfferContentSections({ offer, relatedOffers = [] }: OfferContent
                   href={`/offers/${relatedOffer.id}`}
                   className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
                 >
-                  {relatedCover?.url ? (
+                  {relatedCover ? (
                     <img
                       src={relatedCover.url}
                       alt={relatedOffer.name}

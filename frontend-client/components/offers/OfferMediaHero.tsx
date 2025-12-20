@@ -1,89 +1,28 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { getApiUrl } from "@/lib/config"
-import { getToken } from "@/lib/api"
-import type { MediaItem } from "@/lib/api"
+import { useState } from "react"
+import type { OfferMediaGroup } from "@/lib/api"
 
 interface OfferMediaHeroProps {
   offerName: string
-  images: MediaItem[]
-  promoVideo: MediaItem | null
-  offerId: string
+  media?: OfferMediaGroup | null
 }
 
-export function OfferMediaHero({ offerName, images, promoVideo, offerId }: OfferMediaHeroProps) {
+export function OfferMediaHero({ offerName, media }: OfferMediaHeroProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [showGallery, setShowGallery] = useState(false)
   const [showVideoModal, setShowVideoModal] = useState(false)
-  const [imageUrls, setImageUrls] = useState<Record<string, string>>({})
-  const [videoUrl, setVideoUrl] = useState<string | null>(null)
 
-  // Fetch presigned URLs for media without URLs
-  useEffect(() => {
-    const fetchPresignedUrls = async () => {
-      const urls: Record<string, string> = {}
-      
-      // Fetch presigned URLs for images without URLs
-      for (const image of images) {
-        if (!image.url && image.id) {
-          try {
-            const token = getToken()
-            const response = await fetch(
-              getApiUrl(`api/v1/offers/${offerId}/media/${image.id}/download`),
-              {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-              }
-            )
-            if (response.ok) {
-              const data = await response.json()
-              if (data.download_url) {
-                urls[image.id] = data.download_url
-              }
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch presigned URL for media ${image.id}:`, err)
-          }
-        } else if (image.url) {
-          urls[image.id] = image.url
-        }
-      }
-      
-      setImageUrls(urls)
-      
-      // Fetch presigned URL for video if needed
-      if (promoVideo && !promoVideo.url && promoVideo.id) {
-        try {
-          const token = getToken()
-          const response = await fetch(
-            getApiUrl(`api/v1/offers/${offerId}/media/${promoVideo.id}/download`),
-            {
-              headers: token ? { Authorization: `Bearer ${token}` } : {},
-            }
-          )
-          if (response.ok) {
-            const data = await response.json()
-            if (data.download_url) {
-              setVideoUrl(data.download_url)
-            }
-          }
-        } catch (err) {
-          console.warn(`Failed to fetch presigned URL for video ${promoVideo.id}:`, err)
-        }
-      } else if (promoVideo?.url) {
-        setVideoUrl(promoVideo.url)
-      }
-    }
-    
-    if (images.length > 0 || promoVideo) {
-      fetchPresignedUrls()
-    }
-  }, [images, promoVideo, offerId])
+  // Build image list: cover first (if exists), then gallery
+  const images: Array<{ id: string; url: string }> = []
+  if (media?.cover) {
+    images.push({ id: media.cover.id, url: media.cover.url })
+  }
+  images.push(...(media?.gallery.map(m => ({ id: m.id, url: m.url })) || []))
 
-  const coverImage = images.find(m => m.is_cover) || images[0] || null
-  const currentImage = images[currentIndex] || coverImage
-  const currentImageUrl = currentImage ? (imageUrls[currentImage.id] || currentImage.url) : null
-  const effectiveVideoUrl = videoUrl || promoVideo?.url
+  const currentImage = images[currentIndex] || null
+  const currentImageUrl = currentImage?.url || null
+  const promoVideo = media?.promo_video
 
   if (images.length === 0 && !promoVideo) {
     return (
@@ -180,7 +119,7 @@ export function OfferMediaHero({ offerName, images, promoVideo, offerId }: Offer
               ✕ Close
             </button>
             <img
-              src={images[currentIndex] ? (imageUrls[images[currentIndex].id] || images[currentIndex].url) : ''}
+              src={images[currentIndex]?.url || ''}
               alt={`${offerName} - Image ${currentIndex + 1}`}
               className="w-full h-auto rounded-lg"
               onError={(e) => {
@@ -221,17 +160,17 @@ export function OfferMediaHero({ offerName, images, promoVideo, offerId }: Offer
             >
               ✕ Close
             </button>
-            {effectiveVideoUrl ? (
-              effectiveVideoUrl.includes('youtube.com') || effectiveVideoUrl.includes('youtu.be') || effectiveVideoUrl.includes('vimeo.com') ? (
+            {promoVideo?.url ? (
+              promoVideo.url.includes('youtube.com') || promoVideo.url.includes('youtu.be') || promoVideo.url.includes('vimeo.com') ? (
                 <iframe
-                  src={effectiveVideoUrl}
+                  src={promoVideo.url}
                   className="w-full aspect-video rounded-lg"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                 />
               ) : (
                 <video
-                  src={effectiveVideoUrl}
+                  src={promoVideo.url}
                   controls
                   className="w-full rounded-lg"
                 />

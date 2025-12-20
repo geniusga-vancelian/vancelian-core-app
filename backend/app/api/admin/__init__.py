@@ -9,6 +9,8 @@ from app.api.admin.users import router as users_router
 from app.api.admin.transactions import router as transactions_router
 from app.api.admin.offers import router as offers_router
 from app.api.admin.offers_media import router as offers_media_router
+from app.api.admin.articles import router as articles_router
+from app.api.admin.articles_media import router as articles_media_router
 from app.api.admin.system import router as system_router
 from app.api.admin.debug import router as debug_router
 
@@ -21,5 +23,7 @@ router.include_router(users_router, tags=["admin-users"])
 router.include_router(transactions_router, tags=["admin-transactions"])
 router.include_router(offers_router, tags=["admin-offers"])
 router.include_router(offers_media_router, tags=["admin-offers-media"])
+router.include_router(articles_router, tags=["admin-articles"])
+router.include_router(articles_media_router, tags=["admin-articles-media"])
 router.include_router(system_router, tags=["admin-system"])
 router.include_router(debug_router, tags=["admin-debug"])

@@ -1,56 +1,25 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { getApiUrl } from "@/lib/config"
-import { getToken } from "@/lib/api"
+import { useState } from "react"
+import type { PresignedMediaItem } from "@/lib/api"
 
 interface OfferImageCarouselProps {
-  images: Array<{ id: string; url: string | null; is_cover: boolean }>
+  media?: {
+    cover: PresignedMediaItem | null
+    gallery: PresignedMediaItem[]
+  } | null
   offerName: string
-  offerId: string
 }
 
-export function OfferImageCarousel({ images, offerName, offerId }: OfferImageCarouselProps) {
+export function OfferImageCarousel({ media, offerName }: OfferImageCarouselProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
-  const [imageUrls, setImageUrls] = useState<Record<string, string>>({})
 
-  // Fetch presigned URLs for media without URLs
-  useEffect(() => {
-    const fetchPresignedUrls = async () => {
-      const urls: Record<string, string> = {}
-      
-      // Fetch presigned URLs for images without URLs
-      for (const image of images) {
-        if (!image.url && image.id) {
-          try {
-            const token = getToken()
-            const response = await fetch(
-              getApiUrl(`api/v1/offers/${offerId}/media/${image.id}/download`),
-              {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-              }
-            )
-            if (response.ok) {
-              const data = await response.json()
-              if (data.download_url) {
-                urls[image.id] = data.download_url
-              }
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch presigned URL for media ${image.id}:`, err)
-          }
-        } else if (image.url) {
-          urls[image.id] = image.url
-        }
-      }
-      
-      setImageUrls(urls)
-    }
-    
-    if (images.length > 0) {
-      fetchPresignedUrls()
-    }
-  }, [images, offerId])
+  // Build image list: cover first (if exists), then gallery
+  const images: PresignedMediaItem[] = []
+  if (media?.cover) {
+    images.push(media.cover)
+  }
+  images.push(...(media?.gallery || []))
 
   if (images.length === 0) {
     return (
@@ -61,7 +30,7 @@ export function OfferImageCarousel({ images, offerName, offerId }: OfferImageCar
   }
 
   const currentImage = images[currentImageIndex]
-  const currentImageUrl = currentImage ? (imageUrls[currentImage.id] || currentImage.url) : null
+  const currentImageUrl = currentImage?.url || null
 
   if (images.length === 1) {
     // Single image - no carousel needed
@@ -79,7 +48,7 @@ export function OfferImageCarousel({ images, offerName, offerId }: OfferImageCar
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <span className="text-gray-400 text-sm">Loading image...</span>
+            <span className="text-gray-400 text-sm">No image available</span>
           </div>
         )}
       </div>

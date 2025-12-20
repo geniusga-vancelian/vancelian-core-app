@@ -42,21 +42,7 @@ export default function OffersPage() {
     }
   }
 
-  const getImages = (offer: Offer): Array<{ id: string; url: string | null; is_cover: boolean }> => {
-    if (!offer.media || offer.media.length === 0) return []
-    
-    // Filter only images (include those without URL - will fetch presigned URL)
-    const images = offer.media
-      .filter(m => m.type === 'IMAGE')
-      .map(m => ({ id: m.id, url: m.url || null, is_cover: m.is_cover || false }))
-    
-    // Sort: cover image first, then by sort_order if available
-    return images.sort((a, b) => {
-      if (a.is_cover) return -1
-      if (b.is_cover) return 1
-      return 0
-    })
-  }
+  // Media is now structured in offer.media (OfferMediaGroup)
 
   const getProgressPercentage = (offer: Offer): number => {
     const committed = parseFloat(offer.committed_amount)
@@ -97,7 +83,6 @@ export default function OffersPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {offers.map((offer) => {
-            const images = getImages(offer)
             const progress = getProgressPercentage(offer)
             const remaining = parseFloat(offer.remaining_amount)
             const isFull = remaining <= 0
@@ -109,7 +94,10 @@ export default function OffersPage() {
                 className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
               >
                 {/* Image Section - Carousel if multiple, single if one */}
-                <OfferImageCarousel images={images} offerName={offer.name} offerId={offer.id} />
+                <OfferImageCarousel 
+                  media={offer.media ? { cover: offer.media.cover, gallery: offer.media.gallery } : null}
+                  offerName={offer.name}
+                />
 
                 <div className="p-6">
                   {/* Header */}

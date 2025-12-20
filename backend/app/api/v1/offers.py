@@ -12,11 +12,16 @@ import logging
 from app.infrastructure.database import get_db
 from app.core.offers.models import Offer, OfferStatus, OfferMedia, OfferDocument, MediaVisibility, DocumentVisibility
 from datetime import datetime, timezone
-from app.schemas.offers import OfferResponse, InvestInOfferRequest, OfferInvestmentResponse, MediaItemResponse, DocumentItemResponse
+from app.schemas.offers import (
+    OfferResponse, InvestInOfferRequest, OfferInvestmentResponse, MediaItemResponse, DocumentItemResponse,
+    OfferMediaBlockResponse, PresignedMediaItemResponse, PresignedDocumentItemResponse
+)
 from app.auth.dependencies import require_user_role
 from app.auth.oidc import Principal
 from app.utils.trace_id import get_trace_id
 from app.infrastructure.settings import get_settings
+from app.services.storage.s3_service import get_s3_service
+from app.services.storage.exceptions import StorageNotConfiguredError
 
 settings = get_settings()
 
@@ -35,8 +40,52 @@ from app.services.fund_services import InsufficientBalanceError, ValidationError
 router = APIRouter()
 
 
+def generate_presigned_url_for_media(media: OfferMedia) -> Optional[str]:
+    """
+    Generate presigned URL for media.
+    Returns None if storage is not configured or if media.url exists (public CDN).
+    """
+    # If media has a public URL, prefer it
+    if media.url:
+        return media.url
+    
+    # Try to generate presigned URL
+    try:
+        s3_service = get_s3_service()
+        return s3_service.generate_presigned_get_url(key=media.key)
+    except StorageNotConfiguredError:
+        # Storage not configured - return None
+        logger.warning(f"Storage not configured, cannot generate presigned URL for media {media.id}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to generate presigned URL for media {media.id}: {str(e)}")
+        return None
+
+
+def generate_presigned_url_for_document(doc: OfferDocument) -> Optional[str]:
+    """
+    Generate presigned URL for document.
+    Returns None if storage is not configured or if doc.url exists (public CDN).
+    """
+    # If document has a public URL, prefer it
+    if doc.url:
+        return doc.url
+    
+    # Try to generate presigned URL
+    try:
+        s3_service = get_s3_service()
+        return s3_service.generate_presigned_get_url(key=doc.key)
+    except StorageNotConfiguredError:
+        # Storage not configured - return None
+        logger.warning(f"Storage not configured, cannot generate presigned URL for document {doc.id}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to generate presigned URL for document {doc.id}: {str(e)}")
+        return None
+
+
 def resolve_media_url(media: OfferMedia) -> Optional[str]:
-    """Resolve media URL (public CDN or None for presigned)"""
+    """Resolve media URL (public CDN or None for presigned) - DEPRECATED: use generate_presigned_url_for_media"""
     if media.url:
         return media.url
     if settings.S3_PUBLIC_BASE_URL:
@@ -45,7 +94,7 @@ def resolve_media_url(media: OfferMedia) -> Optional[str]:
 
 
 def resolve_document_url(doc: OfferDocument) -> Optional[str]:
-    """Resolve document URL (public CDN or None for presigned)"""
+    """Resolve document URL (public CDN or None for presigned) - DEPRECATED: use generate_presigned_url_for_document"""
     if doc.url:
         return doc.url
     if settings.S3_PUBLIC_BASE_URL:
@@ -53,33 +102,110 @@ def resolve_document_url(doc: OfferDocument) -> Optional[str]:
     return None
 
 
-def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
-    """Build OfferResponse with media and documents (PUBLIC only)
-    
-    Uses explicit queries to avoid SQLAlchemy relationship ambiguity.
+def build_media_block(offer: Offer, db: Session) -> OfferMediaBlockResponse:
     """
-    # Get PUBLIC media via explicit query (avoid relationship ambiguity)
-    media_list = db.query(OfferMedia).filter(
+    Build structured media block with presigned URLs.
+    
+    Structure:
+    - cover: The media identified by offer.cover_media_id (if exists and PUBLIC)
+    - promo_video: The media identified by offer.promo_video_media_id (if exists and PUBLIC)
+    - gallery: All other PUBLIC media items (excluding cover and promo_video)
+    - documents: All PUBLIC documents
+    
+    Uses bulk queries to avoid SQLAlchemy relationship ambiguity.
+    Always returns a valid OfferMediaBlockResponse (even if empty) to avoid 412 errors.
+    """
+    # Collect cover and promo_video IDs for bulk query
+    media_ids_to_fetch = []
+    cover_id = offer.cover_media_id
+    promo_id = offer.promo_video_media_id
+    
+    if cover_id:
+        media_ids_to_fetch.append(cover_id)
+    if promo_id:
+        media_ids_to_fetch.append(promo_id)
+    
+    # Bulk fetch cover and promo_video (if IDs exist)
+    cover_promo_media_dict = {}
+    if media_ids_to_fetch:
+        cover_promo_media = db.query(OfferMedia).filter(
+            OfferMedia.id.in_(media_ids_to_fetch),
+            OfferMedia.offer_id == offer.id,  # Security: ensure media belongs to this offer
+            OfferMedia.visibility == MediaVisibility.PUBLIC
+        ).all()
+        cover_promo_media_dict = {media.id: media for media in cover_promo_media}
+    
+    cover_media = cover_promo_media_dict.get(cover_id) if cover_id else None
+    promo_video_media = cover_promo_media_dict.get(promo_id) if promo_id else None
+    
+    # Get all other PUBLIC media (excluding cover and promo_video)
+    gallery_media_query = db.query(OfferMedia).filter(
         OfferMedia.offer_id == offer.id,
         OfferMedia.visibility == MediaVisibility.PUBLIC
-    ).order_by(OfferMedia.sort_order, OfferMedia.created_at).all()
+    )
     
-    media_items = []
-    for media in media_list:
-        url = resolve_media_url(media)
-        media_items.append(MediaItemResponse(
-            id=str(media.id),
-            type=media.type.value,
-            url=url,
-            mime_type=media.mime_type,
-            size_bytes=media.size_bytes,
-            sort_order=media.sort_order,
-            is_cover=media.is_cover,
-            created_at=media.created_at.isoformat(),
-            width=media.width,
-            height=media.height,
-            duration_seconds=media.duration_seconds,
-        ))
+    # Exclude cover and promo_video from gallery
+    if cover_id and promo_id:
+        gallery_media_query = gallery_media_query.filter(
+            ~OfferMedia.id.in_([cover_id, promo_id])
+        )
+    elif cover_id:
+        gallery_media_query = gallery_media_query.filter(OfferMedia.id != cover_id)
+    elif promo_id:
+        gallery_media_query = gallery_media_query.filter(OfferMedia.id != promo_id)
+    
+    gallery_media = gallery_media_query.order_by(OfferMedia.sort_order, OfferMedia.created_at).all()
+    
+    # Build cover response
+    cover_response = None
+    if cover_media:
+        cover_url = generate_presigned_url_for_media(cover_media)
+        if cover_url:  # Only include if URL was successfully generated
+            cover_response = PresignedMediaItemResponse(
+                id=str(cover_media.id),
+                type=cover_media.type.value,
+                kind="COVER",
+                url=cover_url,
+                mime_type=cover_media.mime_type,
+                size_bytes=cover_media.size_bytes,
+                width=cover_media.width,
+                height=cover_media.height,
+                duration_seconds=cover_media.duration_seconds,
+            )
+    
+    # Build promo_video response
+    promo_video_response = None
+    if promo_video_media:
+        promo_url = generate_presigned_url_for_media(promo_video_media)
+        if promo_url:  # Only include if URL was successfully generated
+            promo_video_response = PresignedMediaItemResponse(
+                id=str(promo_video_media.id),
+                type=promo_video_media.type.value,
+                kind="PROMO_VIDEO",
+                url=promo_url,
+                mime_type=promo_video_media.mime_type,
+                size_bytes=promo_video_media.size_bytes,
+                width=promo_video_media.width,
+                height=promo_video_media.height,
+                duration_seconds=promo_video_media.duration_seconds,
+            )
+    
+    # Build gallery responses (excluding cover and promo_video)
+    gallery_responses = []
+    for media in gallery_media:
+        gallery_url = generate_presigned_url_for_media(media)
+        if gallery_url:  # Only include if URL was successfully generated
+            gallery_responses.append(PresignedMediaItemResponse(
+                id=str(media.id),
+                type=media.type.value,
+                kind=None,  # Gallery items don't have a kind
+                url=gallery_url,
+                mime_type=media.mime_type,
+                size_bytes=media.size_bytes,
+                width=media.width,
+                height=media.height,
+                duration_seconds=media.duration_seconds,
+            ))
     
     # Get PUBLIC documents
     docs = db.query(OfferDocument).filter(
@@ -87,28 +213,36 @@ def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
         OfferDocument.visibility == DocumentVisibility.PUBLIC
     ).order_by(OfferDocument.created_at.desc()).all()
     
-    doc_items = []
+    # Build document responses
+    document_responses = []
     for doc in docs:
-        url = resolve_document_url(doc)
-        doc_items.append(DocumentItemResponse(
-            id=str(doc.id),
-            name=doc.name,
-            kind=doc.kind.value,
-            url=url,
-            mime_type=doc.mime_type,
-            size_bytes=doc.size_bytes,
-            created_at=doc.created_at.isoformat(),
-        ))
+        doc_url = generate_presigned_url_for_document(doc)
+        if doc_url:  # Only include if URL was successfully generated
+            document_responses.append(PresignedDocumentItemResponse(
+                id=str(doc.id),
+                name=doc.name,
+                kind=doc.kind.value,
+                url=doc_url,
+                mime_type=doc.mime_type,
+                size_bytes=doc.size_bytes,
+            ))
     
-    # Resolve cover URL if cover_media_id is set (explicit query, no relationship)
-    cover_url = None
-    if offer.cover_media_id:
-        cover_media = db.query(OfferMedia).filter(
-            OfferMedia.id == offer.cover_media_id,
-            OfferMedia.visibility == MediaVisibility.PUBLIC
-        ).first()
-        if cover_media:
-            cover_url = resolve_media_url(cover_media)
+    return OfferMediaBlockResponse(
+        cover=cover_response,
+        promo_video=promo_video_response,
+        gallery=gallery_responses,
+        documents=document_responses,
+    )
+
+
+def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
+    """Build OfferResponse with structured media block containing presigned URLs.
+    
+    Uses explicit queries to avoid SQLAlchemy relationship ambiguity.
+    All media URLs are presigned URLs generated at runtime (never public endpoints).
+    """
+    # Build structured media block with presigned URLs
+    media_block = build_media_block(offer, db)
     
     # Compute fill percentage
     max_amount = float(offer.max_amount)
@@ -151,12 +285,11 @@ def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
         metadata=offer.offer_metadata,
         created_at=offer.created_at.isoformat(),
         updated_at=offer.updated_at.isoformat() if offer.updated_at else None,
-        media=media_items,
-        documents=doc_items,
+        media=media_block,  # Structured media block with presigned URLs
         # Marketing V1.1 fields
         cover_media_id=str(offer.cover_media_id) if offer.cover_media_id else None,
         promo_video_media_id=str(offer.promo_video_media_id) if offer.promo_video_media_id else None,
-        cover_url=cover_url,
+        cover_url=media_block.cover.url if media_block.cover else None,  # Keep cover_url for backward compatibility
         location_label=offer.location_label,
         location_lat=str(offer.location_lat) if offer.location_lat is not None else None,
         location_lng=str(offer.location_lng) if offer.location_lng is not None else None,

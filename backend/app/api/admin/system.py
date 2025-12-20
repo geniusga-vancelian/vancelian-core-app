@@ -23,6 +23,19 @@ class StorageInfoResponse(BaseModel):
     public_base_url: Optional[str] = None
 
 
+class StorageStatusResponse(BaseModel):
+    """Storage status response (DEV ONLY - detailed diagnostics)"""
+    storage_enabled: bool
+    provider: str
+    bucket: Optional[str] = None
+    endpoint_url: Optional[str] = None
+    region: Optional[str] = None
+    public_base_url: Optional[str] = None
+    presign_expires_seconds: int
+    key_prefix: str
+    reason_disabled: Optional[str] = None
+
+
 def mask_sensitive(value: str, show_chars: int = 4) -> str:
     """Mask sensitive string, showing only first N chars"""
     if not value or len(value) <= show_chars:
@@ -47,5 +60,39 @@ async def get_storage_info(
         region=settings.S3_REGION if settings.S3_REGION else None,
         prefix=settings.S3_KEY_PREFIX,
         public_base_url=settings.S3_PUBLIC_BASE_URL if settings.S3_PUBLIC_BASE_URL else None,
+    )
+
+
+@router.get(
+    "/system/storage-status",
+    response_model=StorageStatusResponse,
+    summary="Get detailed storage status (DEV ONLY)",
+    description="Get detailed storage (S3/R2) configuration status with diagnostics. DEV ONLY - requires DEV_MODE=True. Requires ADMIN role. Never returns secrets.",
+)
+async def get_storage_status(
+    principal: Principal = Depends(require_admin_role()),
+) -> StorageStatusResponse:
+    """Get detailed storage status (DEV ONLY)"""
+    # Only allow in dev mode or development/local environment
+    env_lower = settings.ENV.lower()
+    if not (settings.DEV_MODE or env_lower in ["local", "development", "dev"]):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="NOT_FOUND"
+        )
+    
+    # Get reason_disabled if storage is not enabled
+    reason_disabled = settings.get_storage_disabled_reason()
+    
+    return StorageStatusResponse(
+        storage_enabled=settings.storage_enabled,
+        provider=settings.STORAGE_PROVIDER,
+        bucket=settings.S3_BUCKET if settings.S3_BUCKET else None,
+        endpoint_url=settings.S3_ENDPOINT_URL if settings.S3_ENDPOINT_URL else None,
+        region=settings.S3_REGION if settings.S3_REGION else None,
+        public_base_url=settings.S3_PUBLIC_BASE_URL if settings.S3_PUBLIC_BASE_URL else None,
+        presign_expires_seconds=settings.S3_PRESIGN_EXPIRES_SECONDS,
+        key_prefix=settings.S3_KEY_PREFIX,
+        reason_disabled=reason_disabled,
     )
 

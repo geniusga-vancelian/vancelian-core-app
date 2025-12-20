@@ -154,6 +154,35 @@ export interface DocumentItem {
   created_at: string
 }
 
+// New structured media types (v1.1 with presigned URLs)
+export interface PresignedMediaItem {
+  id: string
+  type: 'IMAGE' | 'VIDEO'
+  kind?: string | null  // 'COVER' | 'PROMO_VIDEO' | null
+  url: string  // Always present (presigned URL)
+  mime_type: string
+  size_bytes: number
+  width?: number | null
+  height?: number | null
+  duration_seconds?: number | null
+}
+
+export interface PresignedDocumentItem {
+  id: string
+  name: string
+  kind: string
+  url: string  // Always present (presigned URL)
+  mime_type: string
+  size_bytes: number
+}
+
+export interface OfferMediaGroup {
+  cover: PresignedMediaItem | null
+  promo_video: PresignedMediaItem | null
+  gallery: PresignedMediaItem[]
+  documents: PresignedDocumentItem[]
+}
+
 export interface Offer {
   id: string
   code: string
@@ -168,8 +197,8 @@ export interface Offer {
   metadata?: Record<string, any>
   created_at: string
   updated_at?: string
-  media?: MediaItem[]
-  documents?: DocumentItem[]
+  // Structured media block with presigned URLs (v1.1)
+  media?: OfferMediaGroup
   // Marketing V1.1 fields
   cover_media_id?: string | null
   promo_video_media_id?: string | null
@@ -418,6 +447,136 @@ export const transactionsApi = {
     if (!response.ok) {
       const error = await parseApiError(response)
       const err: any = new Error(error.message || 'Failed to fetch transaction')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+}
+
+/**
+ * Articles API
+ */
+export interface ArticleMediaItem {
+  id: string
+  type: 'image' | 'video' | 'document'
+  kind?: string | null  // 'cover' | 'promo_video' | 'document' | null
+  url: string  // Always present (presigned URL)
+  mime_type: string
+  size_bytes: number
+  width?: number | null
+  height?: number | null
+  duration_seconds?: number | null
+}
+
+export interface ArticleMediaGroup {
+  cover: ArticleMediaItem | null
+  promo_video: ArticleMediaItem | null
+  gallery: ArticleMediaItem[]
+  documents: ArticleMediaItem[]
+}
+
+export interface OfferMinimal {
+  id: string
+  code: string
+  name: string
+}
+
+export interface ArticleListItem {
+  id: string
+  slug: string
+  title: string
+  subtitle?: string | null
+  excerpt?: string | null
+  cover_url?: string | null
+  author_name?: string | null
+  published_at?: string | null
+  tags: string[]
+  is_featured: boolean
+}
+
+export interface ArticleDetail {
+  id: string
+  slug: string
+  title: string
+  subtitle?: string | null
+  excerpt?: string | null
+  content_markdown?: string | null
+  content_html?: string | null
+  author_name?: string | null
+  published_at?: string | null
+  created_at: string
+  updated_at?: string | null
+  tags: string[]
+  is_featured: boolean
+  media?: ArticleMediaGroup | null
+  offers: OfferMinimal[]
+  seo_title?: string | null
+  seo_description?: string | null
+}
+
+export interface ListArticlesParams {
+  tag?: string
+  featured?: boolean
+  offer_id?: string
+  limit?: number
+  offset?: number
+}
+
+export const articlesApi = {
+  /**
+   * List published articles
+   */
+  listArticles: async (params?: ListArticlesParams): Promise<ArticleListItem[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.tag) queryParams.append('tag', params.tag)
+    if (params?.featured !== undefined) queryParams.append('featured', String(params.featured))
+    if (params?.offer_id) queryParams.append('offer_id', params.offer_id)
+    queryParams.append('limit', String(params?.limit || 20))
+    queryParams.append('offset', String(params?.offset || 0))
+    
+    const response = await apiRequest(`api/v1/articles?${queryParams.toString()}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch articles')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  /**
+   * Get article by slug
+   */
+  getArticleBySlug: async (slug: string): Promise<ArticleDetail> => {
+    const response = await apiRequest(`api/v1/articles/${slug}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch article')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  /**
+   * Get articles linked to an offer
+   */
+  getOfferArticles: async (offerId: string, params?: { limit?: number; offset?: number }): Promise<ArticleListItem[]> => {
+    const queryParams = new URLSearchParams()
+    queryParams.append('limit', String(params?.limit || 10))
+    queryParams.append('offset', String(params?.offset || 0))
+    
+    const response = await apiRequest(`api/v1/offers/${offerId}/articles?${queryParams.toString()}`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch offer articles')
       err.code = error.code
       err.trace_id = error.trace_id
       err.status = response.status

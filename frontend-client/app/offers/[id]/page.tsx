@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
-import { getToken, apiRequest, offersApi, type Offer, type InvestInOfferResponse } from "@/lib/api"
+import { getToken, apiRequest, offersApi, articlesApi, type Offer, type InvestInOfferResponse, type ArticleListItem } from "@/lib/api"
 import { OfferMediaHero } from "@/components/offers/OfferMediaHero"
 import { OfferKpiCard } from "@/components/offers/OfferKpiCard"
 import { OfferContentSections } from "@/components/offers/OfferContentSections"
@@ -25,6 +25,7 @@ export default function OfferDetailPage() {
   const [offer, setOffer] = useState<Offer | null>(null)
   const [wallet, setWallet] = useState<WalletBalance | null>(null)
   const [relatedOffers, setRelatedOffers] = useState<Offer[]>([])
+  const [offerArticles, setOfferArticles] = useState<ArticleListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [traceId, setTraceId] = useState<string | null>(null)
@@ -57,8 +58,11 @@ export default function OfferDetailPage() {
       // DEBUG: Log media data
       if (process.env.NODE_ENV === 'development') {
         console.log('[OFFER DEBUG] Media data:', {
-          mediaCount: offerData.media?.length || 0,
-          media: offerData.media?.map(m => ({ id: m.id, type: m.type, url: m.url, hasUrl: !!m.url })),
+          hasMedia: !!offerData.media,
+          cover: offerData.media?.cover ? { id: offerData.media.cover.id, url: offerData.media.cover.url } : null,
+          promoVideo: offerData.media?.promo_video ? { id: offerData.media.promo_video.id, url: offerData.media.promo_video.url } : null,
+          galleryCount: offerData.media?.gallery?.length || 0,
+          documentsCount: offerData.media?.documents?.length || 0,
         })
       }
       
@@ -78,6 +82,15 @@ export default function OfferDetailPage() {
       } catch {
         // Ignore errors for related offers (optional feature)
         setRelatedOffers([])
+      }
+
+      // Load articles linked to this offer
+      try {
+        const articles = await articlesApi.getOfferArticles(offerId, { limit: 3 })
+        setOfferArticles(articles)
+      } catch {
+        // Ignore errors for articles (optional feature)
+        setOfferArticles([])
       }
     } catch (err: any) {
       setError(err.message || "Failed to load offer")
@@ -157,15 +170,7 @@ export default function OfferDetailPage() {
     setTraceId(null)
   }
 
-  const getImages = () => {
-    if (!offer?.media) return []
-    return offer.media.filter(m => m.type === 'IMAGE').sort((a, b) => a.sort_order - b.sort_order)
-  }
-
-  const getPromoVideo = () => {
-    if (!offer?.media) return null
-    return offer.media.find(m => m.type === 'VIDEO') || null
-  }
+  // Media is now structured in offer.media (OfferMediaGroup)
 
   if (loading) {
     return (
@@ -190,9 +195,6 @@ export default function OfferDetailPage() {
     )
   }
 
-  const images = getImages()
-  const promoVideo = getPromoVideo()
-
   return (
     <main className="container mx-auto p-8 max-w-7xl">
       {/* Breadcrumb */}
@@ -210,9 +212,7 @@ export default function OfferDetailPage() {
       {/* Hero Media */}
       <OfferMediaHero
         offerName={offer.name}
-        images={images}
-        promoVideo={promoVideo}
-        offerId={offerId}
+        media={offer.media}
       />
 
       {/* Main Layout: Content + Sticky Invest Module */}
@@ -235,6 +235,57 @@ export default function OfferDetailPage() {
             offer={offer}
             relatedOffers={relatedOffers}
           />
+
+          {/* News / Updates Section */}
+          {offerArticles.length > 0 && (
+            <div className="border-t border-gray-200 pt-8">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-semibold">News & Updates</h2>
+                <Link
+                  href={`/blog?offer_id=${offerId}`}
+                  className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                >
+                  See all →
+                </Link>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {offerArticles.map((article) => (
+                  <Link
+                    key={article.id}
+                    href={`/blog/${article.slug}`}
+                    className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
+                  >
+                    {article.cover_url && (
+                      <img
+                        src={article.cover_url}
+                        alt={article.title}
+                        className="w-full h-32 object-cover"
+                      />
+                    )}
+                    <div className="p-4">
+                      <h3 className="font-semibold mb-2 line-clamp-2 text-sm">{article.title}</h3>
+                      <p className="text-xs text-gray-500">
+                        {article.published_at
+                          ? new Date(article.published_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                            })
+                          : ''}
+                      </p>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {offerArticles.length === 0 && (
+            <div className="border-t border-gray-200 pt-8">
+              <h2 className="text-2xl font-semibold mb-4">News & Updates</h2>
+              <p className="text-gray-500 text-sm">No updates available for this offer yet.</p>
+            </div>
+          )}
         </div>
 
         {/* Right: Sticky KPI + Invest Module */}

@@ -288,6 +288,157 @@ class DatabaseAuditor:
             details={"found_columns": found}
         )
     
+    def check_articles_table(self) -> CheckResult:
+        """Check articles table structure"""
+        table_name = "articles"
+        
+        if not self.check_table_exists(table_name):
+            return CheckResult(
+                name="Articles Table",
+                status="FAIL",
+                message=f"Table '{table_name}' does not exist"
+            )
+        
+        columns = self.get_table_columns(table_name)
+        column_names = {col['column_name'] for col in columns}
+        
+        required_columns = {
+            'id': 'uuid',
+            'slug': 'text/varchar',
+            'status': 'text/varchar',
+            'title': 'text/varchar',
+            'subtitle': 'text/varchar',
+            'excerpt': 'text/varchar',
+            'content_markdown': 'text/varchar',
+            'content_html': 'text/varchar',
+            'cover_media_id': 'uuid',
+            'promo_video_media_id': 'uuid',
+            'author_name': 'text/varchar',
+            'published_at': 'timestamp',
+            'created_at': 'timestamp',
+            'updated_at': 'timestamp',
+            'seo_title': 'text/varchar',
+            'seo_description': 'text/varchar',
+            'tags': 'jsonb',
+            'is_featured': 'boolean',
+            'allow_comments': 'boolean',
+        }
+        
+        missing = []
+        found = []
+        for col_name in required_columns:
+            if col_name not in column_names:
+                missing.append(col_name)
+            else:
+                found.append(col_name)
+        
+        if missing:
+            return CheckResult(
+                name="Articles Table",
+                status="FAIL",
+                message=f"Missing columns: {', '.join(missing)}",
+                details={"missing": missing, "found": found}
+            )
+        
+        return CheckResult(
+            name="Articles Table",
+            status="PASS",
+            message=f"All required columns present ({len(found)}/{len(required_columns)})",
+            details={"found_columns": found}
+        )
+    
+    def check_article_media_table(self) -> CheckResult:
+        """Check article_media table structure"""
+        table_name = "article_media"
+        
+        if not self.check_table_exists(table_name):
+            return CheckResult(
+                name="Article Media Table",
+                status="FAIL",
+                message=f"Table '{table_name}' does not exist"
+            )
+        
+        columns = self.get_table_columns(table_name)
+        column_names = {col['column_name'] for col in columns}
+        
+        required_columns = {
+            'id': 'uuid',
+            'article_id': 'uuid',
+            'type': 'enum/text',
+            'key': 'text/varchar',  # S3/R2 storage key
+            'mime_type': 'text/varchar',
+            'size_bytes': 'bigint/integer',
+            'width': 'integer',
+            'height': 'integer',
+            'duration_seconds': 'integer',
+            'created_at': 'timestamp',
+        }
+        
+        missing = []
+        found = []
+        for col_name in required_columns:
+            if col_name not in column_names:
+                missing.append(col_name)
+            else:
+                found.append(col_name)
+        
+        if missing:
+            return CheckResult(
+                name="Article Media Table",
+                status="FAIL",
+                message=f"Missing columns: {', '.join(missing)}",
+                details={"missing": missing, "found": found}
+            )
+        
+        return CheckResult(
+            name="Article Media Table",
+            status="PASS",
+            message=f"All required columns present ({len(found)}/{len(required_columns)})",
+            details={"found_columns": found}
+        )
+    
+    def check_article_offers_table(self) -> CheckResult:
+        """Check article_offers junction table structure"""
+        table_name = "article_offers"
+        
+        if not self.check_table_exists(table_name):
+            return CheckResult(
+                name="Article Offers Table",
+                status="FAIL",
+                message=f"Table '{table_name}' does not exist"
+            )
+        
+        columns = self.get_table_columns(table_name)
+        column_names = {col['column_name'] for col in columns}
+        
+        required_columns = {
+            'article_id': 'uuid',
+            'offer_id': 'uuid',
+        }
+        
+        missing = []
+        found = []
+        for col_name in required_columns:
+            if col_name not in column_names:
+                missing.append(col_name)
+            else:
+                found.append(col_name)
+        
+        if missing:
+            return CheckResult(
+                name="Article Offers Table",
+                status="FAIL",
+                message=f"Missing columns: {', '.join(missing)}",
+                details={"missing": missing, "found": found}
+            )
+        
+        return CheckResult(
+            name="Article Offers Table",
+            status="PASS",
+            message=f"All required columns present ({len(found)}/{len(required_columns)})",
+            details={"found_columns": found}
+        )
+    
     def get_foreign_keys(self, table_name: str) -> List[Dict]:
         """Get foreign keys for a table"""
         return self.execute_query("""
@@ -337,6 +488,41 @@ class DatabaseAuditor:
                 "references_table": "offer_media",
                 "references_column": "id",
                 "on_delete": "SET NULL",  # or NO ACTION
+            },
+            {
+                "table": "article_media",
+                "column": "article_id",
+                "references_table": "articles",
+                "references_column": "id",
+                "on_delete": "CASCADE",
+            },
+            {
+                "table": "articles",
+                "column": "cover_media_id",
+                "references_table": "article_media",
+                "references_column": "id",
+                "on_delete": "SET NULL",
+            },
+            {
+                "table": "articles",
+                "column": "promo_video_media_id",
+                "references_table": "article_media",
+                "references_column": "id",
+                "on_delete": "SET NULL",
+            },
+            {
+                "table": "article_offers",
+                "column": "article_id",
+                "references_table": "articles",
+                "references_column": "id",
+                "on_delete": "CASCADE",
+            },
+            {
+                "table": "article_offers",
+                "column": "offer_id",
+                "references_table": "offers",
+                "references_column": "id",
+                "on_delete": "CASCADE",
             },
         ]
         
@@ -401,6 +587,14 @@ class DatabaseAuditor:
             {"table": "offer_media", "column": "offer_id"},
             {"table": "offers", "column": "cover_media_id"},
             {"table": "offers", "column": "promo_video_media_id"},
+            {"table": "articles", "column": "slug"},
+            {"table": "articles", "column": "status"},
+            {"table": "articles", "column": "published_at"},
+            {"table": "articles", "column": "is_featured"},
+            {"table": "articles", "column": "cover_media_id"},
+            {"table": "articles", "column": "promo_video_media_id"},
+            {"table": "article_media", "column": "article_id"},
+            {"table": "article_offers", "column": "offer_id"},
         ]
         
         found_indexes = []
@@ -451,6 +645,9 @@ class DatabaseAuditor:
         checks.append(self.check_alembic_migrations())
         checks.append(self.check_offers_table())
         checks.append(self.check_offer_media_table())
+        checks.append(self.check_articles_table())
+        checks.append(self.check_article_media_table())
+        checks.append(self.check_article_offers_table())
         checks.append(self.check_foreign_keys())
         checks.append(self.check_indexes())
         

@@ -32,6 +32,26 @@ setup_logging()
 # Get settings
 settings = get_settings()
 
+# Log storage status at startup
+import logging
+logger = logging.getLogger(__name__)
+if settings.storage_enabled:
+    reason = None
+    bucket_info = settings.S3_BUCKET if settings.S3_BUCKET else "none"
+    endpoint_info = settings.S3_ENDPOINT_URL if settings.S3_ENDPOINT_URL else "none"
+else:
+    reason = settings.get_storage_disabled_reason()
+    bucket_info = "none"
+    endpoint_info = "none"
+
+logger.info(
+    f"STORAGE: {'enabled' if settings.storage_enabled else 'disabled'} "
+    f"provider={settings.STORAGE_PROVIDER} "
+    f"bucket={bucket_info} "
+    f"endpoint={endpoint_info} "
+    f"{'reason=' + reason if reason else ''}"
+)
+
 # Create FastAPI app
 app = FastAPI(
     title="Vancelian Core API",

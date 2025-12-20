@@ -92,6 +92,15 @@ class Offer(BaseModel):
     
     documents = relationship("OfferDocument", back_populates="offer", cascade="all, delete-orphan", lazy="select")
     
+    # Many-to-many relationship with articles (via article_offers association table)
+    # Note: article_offers table is defined in app.core.articles.models
+    articles = relationship(
+        "Article",
+        secondary="article_offers",  # String reference to avoid circular import
+        lazy="select",
+        back_populates="offers",
+    )
+    
     # Backward compatibility alias (deprecated, use offer_media instead)
     @property
     def media(self):

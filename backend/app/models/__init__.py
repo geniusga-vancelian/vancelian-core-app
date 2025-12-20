@@ -38,6 +38,11 @@ from app.core.offers.models import (
     OfferDocument, DocumentKind, DocumentVisibility,
 )
 
+# 8. Article models (depends on Offer via many-to-many)
+from app.core.articles.models import (
+    Article, ArticleMedia, ArticleStatus, ArticleMediaType, article_offers,
+)
+
 # Export all for convenience
 __all__ = [
     "Base",

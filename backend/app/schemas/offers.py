@@ -53,6 +53,37 @@ class MediaItemResponse(BaseModel):
         from_attributes = True
 
 
+class PresignedMediaItemResponse(BaseModel):
+    """Media item with presigned URL for public API"""
+    id: str = Field(..., description="Media UUID")
+    type: str = Field(..., description="Media type: 'IMAGE' or 'VIDEO'")
+    kind: Optional[str] = Field(None, description="Media kind: 'COVER' or 'PROMO_VIDEO' (for gallery items, kind is None)")
+    url: str = Field(..., description="Presigned URL (always generated, never None)")
+    mime_type: str = Field(..., description="MIME type")
+    size_bytes: int = Field(..., description="File size in bytes")
+    width: Optional[int] = Field(None, description="Width in pixels")
+    height: Optional[int] = Field(None, description="Height in pixels")
+    duration_seconds: Optional[int] = Field(None, description="Duration in seconds (for videos)")
+
+
+class PresignedDocumentItemResponse(BaseModel):
+    """Document item with presigned URL for public API"""
+    id: str = Field(..., description="Document UUID")
+    name: str = Field(..., description="Document name")
+    kind: str = Field(..., description="Document kind")
+    url: str = Field(..., description="Presigned URL (always generated, never None)")
+    mime_type: str = Field(..., description="MIME type")
+    size_bytes: int = Field(..., description="File size in bytes")
+
+
+class OfferMediaBlockResponse(BaseModel):
+    """Structured media block for public API responses"""
+    cover: Optional[PresignedMediaItemResponse] = Field(None, description="Cover image with presigned URL")
+    promo_video: Optional[PresignedMediaItemResponse] = Field(None, description="Promo video with presigned URL")
+    gallery: List[PresignedMediaItemResponse] = Field(default_factory=list, description="Gallery images/videos (excluding cover and promo_video)")
+    documents: List[PresignedDocumentItemResponse] = Field(default_factory=list, description="Public documents with presigned URLs")
+
+
 class DocumentItemResponse(BaseModel):
     """Document item response (for public and admin)"""
     id: str = Field(..., description="Document UUID")
@@ -82,8 +113,7 @@ class OfferResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Arbitrary metadata (JSONB)")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     updated_at: Optional[str] = Field(None, description="Last update timestamp (ISO format)")
-    media: Optional[List[MediaItemResponse]] = Field(default=[], description="Public media items (PUBLIC visibility only)")
-    documents: Optional[List[DocumentItemResponse]] = Field(default=[], description="Public documents (PUBLIC visibility only)")
+    media: Optional[OfferMediaBlockResponse] = Field(None, description="Structured media block with presigned URLs (cover, promo_video, gallery, documents)")
     
     # Marketing V1.1 fields
     cover_media_id: Optional[str] = Field(None, description="Cover image media ID")

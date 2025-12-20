@@ -485,6 +485,203 @@ export const offersAdminApi = {
 }
 
 /**
+ * Articles Admin API
+ */
+export type Article = {
+  id: string
+  slug: string
+  status: 'draft' | 'published' | 'archived'
+  title: string
+  subtitle?: string
+  excerpt?: string
+  content_markdown?: string
+  content_html?: string
+  cover_media_id?: string
+  promo_video_media_id?: string
+  author_name?: string
+  published_at?: string
+  created_at: string
+  updated_at?: string
+  seo_title?: string
+  seo_description?: string
+  tags: string[]
+  is_featured: boolean
+  allow_comments: boolean
+  media: Array<{
+    id: string
+    type: 'image' | 'video' | 'document'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    width?: number
+    height?: number
+    duration_seconds?: number
+    created_at: string
+  }>
+  offer_ids: string[]
+}
+
+export type ArticleListItem = {
+  id: string
+  slug: string
+  title: string
+  status: 'draft' | 'published' | 'archived'
+  published_at?: string
+  created_at: string
+  updated_at?: string
+  is_featured: boolean
+}
+
+export type CreateArticlePayload = {
+  slug: string
+  title: string
+  subtitle?: string
+  excerpt?: string
+  content_markdown?: string
+  author_name?: string
+  seo_title?: string
+  seo_description?: string
+  tags?: string[]
+  is_featured?: boolean
+}
+
+export type UpdateArticlePayload = {
+  slug?: string
+  title?: string
+  subtitle?: string
+  excerpt?: string
+  content_markdown?: string
+  content_html?: string
+  author_name?: string
+  seo_title?: string
+  seo_description?: string
+  tags?: string[]
+  is_featured?: boolean
+  status?: 'draft' | 'published' | 'archived'
+}
+
+export const articlesAdminApi = {
+  listArticles: async (params?: {
+    status?: string
+    featured?: boolean
+    offer_id?: string
+    search?: string
+    limit?: number
+    offset?: number
+  }): Promise<ArticleListItem[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.featured !== undefined) queryParams.append('featured', String(params.featured))
+    if (params?.offer_id) queryParams.append('offer_id', params.offer_id)
+    if (params?.search) queryParams.append('search', params.search)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest<ArticleListItem[]>(`admin/v1/articles${query ? `?${query}` : ''}`)
+  },
+
+  getArticle: async (articleId: string): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}`)
+  },
+
+  createArticle: async (payload: CreateArticlePayload): Promise<Article> => {
+    return apiRequest<Article>('admin/v1/articles', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updateArticle: async (articleId: string, payload: UpdateArticlePayload): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  publishArticle: async (articleId: string): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/publish`, {
+      method: 'POST',
+    })
+  },
+
+  archiveArticle: async (articleId: string): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/archive`, {
+      method: 'POST',
+    })
+  },
+
+  linkArticleOffers: async (articleId: string, offerIds: string[]): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/offers`, {
+      method: 'PUT',
+      body: JSON.stringify({ offer_ids: offerIds }),
+    })
+  },
+
+  // Media endpoints
+  presignArticleUpload: async (articleId: string, payload: {
+    upload_type: 'image' | 'video' | 'document'
+    file_name: string
+    mime_type: string
+    size_bytes: number
+  }): Promise<{ upload_url: string; key: string; required_headers: Record<string, string>; expires_in: number }> => {
+    return apiRequest(`admin/v1/articles/${articleId}/uploads/presign`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  createArticleMedia: async (articleId: string, payload: {
+    key: string
+    mime_type: string
+    size_bytes: number
+    type: 'image' | 'video' | 'document'
+    url?: string
+    width?: number
+    height?: number
+    duration_seconds?: number
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  listArticleMedia: async (articleId: string): Promise<Array<{
+    id: string
+    type: 'image' | 'video' | 'document'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    width?: number
+    height?: number
+    duration_seconds?: number
+    created_at: string
+  }>> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media`)
+  },
+
+  deleteArticleMedia: async (articleId: string, mediaId: string): Promise<void> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media/${mediaId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  setArticleCover: async (articleId: string, mediaId: string): Promise<any> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media/${mediaId}/set-cover`, {
+      method: 'POST',
+    })
+  },
+
+  setArticlePromoVideo: async (articleId: string, mediaId: string): Promise<any> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media/${mediaId}/set-promo-video`, {
+      method: 'POST',
+    })
+  },
+}
+
+/**
  * System API
  */
 export const systemApi = {
