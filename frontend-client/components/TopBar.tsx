@@ -52,6 +52,7 @@ export function TopBar() {
           {token && (
             <div className="flex space-x-4">
               <a href="/offers" className="text-gray-600 hover:text-gray-900">Offers</a>
+              <a href="/blog" className="text-gray-600 hover:text-gray-900">Blog</a>
               <a href="/" className="text-gray-600 hover:text-gray-900">Dashboard</a>
               <a href="/transactions" className="text-gray-600 hover:text-gray-900">Transactions</a>
               <a href="/me" className="text-gray-600 hover:text-gray-900">Profile</a>
