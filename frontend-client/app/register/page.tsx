@@ -18,8 +18,7 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
-      const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
-      const response = await fetch(`${apiBaseUrl}/api/v1/auth/register`, {
+      const response = await fetch(getApiUrl('api/v1/auth/register'), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

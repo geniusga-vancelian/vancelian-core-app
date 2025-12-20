@@ -2,39 +2,10 @@
  * API configuration and utilities
  */
 
-// Get API base URL - must be absolute for browser requests
-// Defaults to http://localhost:8000 (not docker service name)
-export const getApiBaseUrl = (): string => {
-  if (typeof window === 'undefined') {
-    // Server-side: use environment variable or default
-    return process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
-  }
-  
-  // Client-side: use environment variable or default to localhost
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
-  
-  // Ensure it's an absolute URL (not relative, not docker service name)
-  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    return `http://${baseUrl}`
-  }
-  
-  // DEV: Log base URL
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[api] baseUrl=', baseUrl)
-  }
-  
-  return baseUrl
-}
+import { getApiBaseUrl, getApiUrl } from './config'
 
-/**
- * Get the full API URL for an endpoint
- */
-export const getApiUrl = (endpoint: string): string => {
-  const baseUrl = getApiBaseUrl()
-  // Remove leading slash from endpoint if present
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint
-  return `${baseUrl}/${cleanEndpoint}`
-}
+// Re-export for backward compatibility
+export { getApiBaseUrl, getApiUrl }
 
 /**
  * Get stored authentication token
@@ -86,6 +57,53 @@ export const apiRequest = async (
 }
 
 /**
+ * Safely parse JSON from a Response, handling empty bodies (204 No Content, etc.)
+ * Returns null if body is empty or not JSON, otherwise returns parsed JSON
+ */
+async function parseJsonSafe(res: Response): Promise<any | null> {
+  // 204 No Content - no body expected
+  if (res.status === 204) {
+    return null
+  }
+
+  // Check content-length header if present
+  const contentLength = res.headers.get('content-length')
+  if (contentLength === '0') {
+    return null
+  }
+
+  // Check content-type header
+  const contentType = res.headers.get('content-type') || ''
+  if (!contentType.includes('application/json')) {
+    // Not JSON, try to read as text
+    const text = await res.text()
+    if (!text || text.trim().length === 0) {
+      return null
+    }
+    // Try to parse as JSON anyway (some APIs don't set content-type correctly)
+    try {
+      return JSON.parse(text)
+    } catch {
+      return null
+    }
+  }
+
+  // Read body as text first to check if empty
+  const text = await res.text()
+  if (!text || text.trim().length === 0) {
+    return null
+  }
+
+  // Parse JSON
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    // If parsing fails, return null (don't throw - let caller handle)
+    return null
+  }
+}
+
+/**
  * Parse API error response
  */
 export const parseApiError = async (response: Response): Promise<{
@@ -94,18 +112,18 @@ export const parseApiError = async (response: Response): Promise<{
   trace_id?: string
   details?: any
 }> => {
-  try {
-    const data = await response.json()
+  const data = await parseJsonSafe(response)
+  if (data !== null) {
     return {
       code: data.error?.code || data.code,
       message: data.error?.message || data.detail || data.message || 'Unknown error',
       trace_id: data.error?.trace_id || data.trace_id,
       details: data.error?.details || data.details,
     }
-  } catch {
-    return {
-      message: `HTTP ${response.status}: ${response.statusText}`,
-    }
+  }
+  // Fallback if no JSON body
+  return {
+    message: `HTTP ${response.status}: ${response.statusText}`,
   }
 }
 
@@ -152,6 +170,30 @@ export interface Offer {
   updated_at?: string
   media?: MediaItem[]
   documents?: DocumentItem[]
+  // Marketing V1.1 fields
+  cover_media_id?: string | null
+  promo_video_media_id?: string | null
+  cover_url?: string | null
+  location_label?: string | null
+  location_lat?: string | null
+  location_lng?: string | null
+  marketing_title?: string | null
+  marketing_subtitle?: string | null
+  marketing_why?: Array<{ title: string; body: string }> | null
+  marketing_highlights?: string[] | null
+  marketing_breakdown?: {
+    purchase_cost?: number
+    transaction_cost?: number
+    running_cost?: number
+  } | null
+  marketing_metrics?: {
+    gross_yield?: number
+    net_yield?: number
+    annualised_return?: number
+    investors_count?: number
+    days_left?: number
+  } | null
+  fill_percentage?: number
 }
 
 export interface ListOffersParams {

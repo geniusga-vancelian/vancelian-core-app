@@ -3,18 +3,12 @@
  */
 
 // Get API base URL - must be absolute for browser requests
+// Import centralized config
+import { getApiBaseUrl as getConfigApiBaseUrl } from './config'
+
 export const getApiBaseUrl = (): string => {
-  if (typeof window === 'undefined') {
-    return process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
-  }
-  
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
-  
-  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    return `http://${baseUrl}`
-  }
-  
-  return baseUrl
+  // Use centralized config (which handles fallbacks properly)
+  return getConfigApiBaseUrl()
 }
 
 /**
@@ -90,24 +84,60 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
 
   if (!response.ok) {
     let errorData: any = { message: `API request failed for ${endpoint}` }
+    const contentType = response.headers.get('content-type') || ''
+    
     try {
-      errorData = await response.json()
+      if (contentType.includes('application/json')) {
+        errorData = await response.json()
+      } else {
+        // Try to read as text for non-JSON responses
+        const text = await response.text()
+        if (text) {
+          try {
+            errorData = JSON.parse(text)
+          } catch {
+            errorData.message = text || response.statusText || errorData.message
+          }
+        } else {
+          errorData.message = response.statusText || errorData.message
+        }
+      }
     } catch (e) {
       errorData.message = response.statusText || errorData.message
     }
     
-    // Backend returns {error: {code, message, trace_id}}, extract nested error object
-    const error = errorData.error || errorData
-    const message = error.message || error.detail || errorData.message || `API request failed for ${endpoint}`
-    const code = error.code || errorData.code
-    const trace_id = error.trace_id || errorData.trace_id
+    // Enhanced logging for 422 validation errors
+    if (response.status === 422 && errorData.detail) {
+      console.error('[ADMIN API] Validation Error (422):', {
+        endpoint,
+        url,
+        status: response.status,
+        detail: errorData.detail,
+        // If detail is an array (Pydantic validation errors), format it nicely
+        validationErrors: Array.isArray(errorData.detail)
+          ? errorData.detail.map((err: any) => ({
+              field: err.loc?.join('.') || 'unknown',
+              message: err.msg || err.message || 'Validation error',
+              type: err.type || 'unknown',
+            }))
+          : errorData.detail,
+      })
+    }
     
     throw {
-      message,
-      code,
+      message: errorData.message || errorData.detail || `API request failed for ${endpoint}`,
+      code: errorData.code,
       status: response.status,
-      trace_id,
+      trace_id: errorData.trace_id,
       endpoint: endpoint,
+      detail: errorData.detail, // Include full detail for validation errors
+      validationErrors: Array.isArray(errorData.detail)
+        ? errorData.detail.map((err: any) => ({
+            field: err.loc?.join('.') || 'unknown',
+            message: err.msg || err.message || 'Validation error',
+            type: err.type || 'unknown',
+          }))
+        : undefined,
     }
   }
 
@@ -117,7 +147,14 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
 /**
  * Parses an API error object for consistent display
  */
-export function parseApiError(err: any): { message: string; code?: string; status?: number; trace_id?: string; endpoint?: string } {
+export function parseApiError(err: any): { 
+  message: string
+  code?: string
+  status?: number
+  trace_id?: string
+  endpoint?: string
+  validationErrors?: Array<{ field: string; message: string; type: string }>
+} {
   if (typeof err === 'object' && err !== null) {
     return {
       message: err.message || "An unknown error occurred",
@@ -125,9 +162,75 @@ export function parseApiError(err: any): { message: string; code?: string; statu
       status: err.status,
       trace_id: err.trace_id,
       endpoint: err.endpoint,
+      validationErrors: err.validationErrors,
     }
   }
   return { message: String(err) }
+}
+
+/**
+ * Types
+ */
+export type Offer = {
+  id: string
+  code: string
+  name: string
+  description?: string
+  currency: string
+  max_amount: string
+  committed_amount: string
+  remaining_amount: string
+  maturity_date?: string
+  status: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
+  metadata?: Record<string, any>
+  created_at: string
+  updated_at?: string
+  // Marketing V1.1
+  cover_media_id?: string
+  promo_video_media_id?: string
+  cover_url?: string
+  location_label?: string
+  location_lat?: string
+  location_lng?: string
+  marketing_title?: string
+  marketing_subtitle?: string
+  marketing_why?: Array<{ title: string; body: string }>
+  marketing_highlights?: string[]
+  marketing_breakdown?: { purchase_cost?: number; transaction_cost?: number; running_cost?: number }
+  marketing_metrics?: { gross_yield?: number; net_yield?: number; annualised_return?: number; investors_count?: number; days_left?: number }
+  fill_percentage?: number
+}
+
+export type CreateOfferPayload = {
+  code: string
+  name: string
+  description?: string
+  currency?: string
+  max_amount: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+}
+
+export type UpdateOfferPayload = {
+  name?: string
+  description?: string
+  max_amount?: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+}
+
+export type UpdateMarketingPayload = {
+  cover_media_id?: string
+  promo_video_media_id?: string
+  location_label?: string
+  location_lat?: number  // Normalized: number, not string
+  location_lng?: number  // Normalized: number, not string
+  marketing_title?: string
+  marketing_subtitle?: string
+  marketing_why?: Array<{ title: string; body: string }>
+  marketing_highlights?: string[]
+  marketing_breakdown?: { purchase_cost?: number; transaction_cost?: number; running_cost?: number }
+  marketing_metrics?: { gross_yield?: number; net_yield?: number; annualised_return?: number; investors_count?: number; days_left?: number }
 }
 
 /**
@@ -191,64 +294,21 @@ export const adminApi = {
 /**
  * Offers Admin API
  */
-export interface Offer {
-  id: string
-  code: string
-  name: string
-  description?: string
-  currency: string
-  status: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
-  max_amount: string
-  committed_amount: string
-  remaining_amount: string
-  maturity_date?: string
-  metadata?: Record<string, any>
-  created_at: string
-  updated_at?: string
-}
-
-export interface CreateOfferPayload {
-  code: string
-  name: string
-  description?: string
-  currency?: string
-  max_amount: string
-  maturity_date?: string
-  metadata?: Record<string, any>
-}
-
-export interface UpdateOfferPayload {
-  name?: string
-  description?: string
-  max_amount?: string
-  maturity_date?: string
-  metadata?: Record<string, any>
-}
-
-export interface ListOffersParams {
-  status?: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
-  currency?: string
-  limit?: number
-  offset?: number
-}
-
 export const offersAdminApi = {
-  /**
-   * List offers
-   */
-  listOffers: async (params?: ListOffersParams): Promise<Offer[]> => {
+  listOffers: async (params?: { status?: string; currency?: string; limit?: number; offset?: number }): Promise<Offer[]> => {
     const queryParams = new URLSearchParams()
     if (params?.status) queryParams.append('status', params.status)
     if (params?.currency) queryParams.append('currency', params.currency)
-    queryParams.append('limit', String(params?.limit || 50))
-    queryParams.append('offset', String(params?.offset || 0))
-    
-    return apiRequest<Offer[]>(`admin/v1/offers?${queryParams.toString()}`)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest<Offer[]>(`admin/v1/offers${query ? `?${query}` : ''}`)
   },
 
-  /**
-   * Create offer
-   */
+  getOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}`)
+  },
+
   createOffer: async (payload: CreateOfferPayload): Promise<Offer> => {
     return apiRequest<Offer>('admin/v1/offers', {
       method: 'POST',
@@ -256,225 +316,89 @@ export const offersAdminApi = {
     })
   },
 
-  /**
-   * Get offer by ID
-   */
-  getOffer: async (id: string): Promise<Offer> => {
-    return apiRequest<Offer>(`admin/v1/offers/${id}`)
-  },
-
-  /**
-   * Update offer
-   */
-  updateOffer: async (id: string, payload: UpdateOfferPayload): Promise<Offer> => {
-    return apiRequest<Offer>(`admin/v1/offers/${id}`, {
+  updateOffer: async (offerId: string, payload: UpdateOfferPayload): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     })
   },
 
-  /**
-   * Publish offer (DRAFT -> LIVE)
-   */
-  publishOffer: async (id: string): Promise<Offer> => {
-    return apiRequest<Offer>(`admin/v1/offers/${id}/publish`, {
+  publishOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}/publish`, {
       method: 'POST',
     })
   },
 
-  /**
-   * Pause offer (LIVE -> PAUSED)
-   */
-  pauseOffer: async (id: string): Promise<Offer> => {
-    return apiRequest<Offer>(`admin/v1/offers/${id}/pause`, {
+  pauseOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}/pause`, {
       method: 'POST',
     })
   },
 
-  /**
-   * Close offer (LIVE/PAUSED -> CLOSED)
-   */
-  closeOffer: async (id: string): Promise<Offer> => {
-    return apiRequest<Offer>(`admin/v1/offers/${id}/close`, {
+  closeOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}/close`, {
       method: 'POST',
     })
   },
 
-  /**
-   * List investments for an offer (paginated)
-   */
-  listOfferInvestments: async (
-    offerId: string,
-    params?: { limit?: number; offset?: number; status?: 'ALL' | 'PENDING' | 'CONFIRMED' | 'REJECTED' }
-  ): Promise<{
+  listOfferInvestments: async (offerId: string, params?: { status?: string; limit?: number; offset?: number }): Promise<{
     items: Array<{
       id: string
-      offer_id: string
-      user_id: string
       user_email: string
       requested_amount: string
       allocated_amount: string
-      currency: string
-      status: 'PENDING' | 'CONFIRMED' | 'REJECTED'
+      status: string
       created_at: string
-      updated_at?: string
       idempotency_key?: string
     }>
+    total: number
     limit: number
     offset: number
-    total: number
   }> => {
     const queryParams = new URLSearchParams()
     if (params?.status) queryParams.append('status', params.status)
-    queryParams.append('limit', String(params?.limit || 50))
-    queryParams.append('offset', String(params?.offset || 0))
-    
-    return apiRequest<{
-      items: Array<{
-        id: string
-        offer_id: string
-        user_id: string
-        user_email: string
-        requested_amount: string
-        allocated_amount: string
-        currency: string
-        status: 'PENDING' | 'CONFIRMED' | 'REJECTED'
-        created_at: string
-        updated_at?: string
-        idempotency_key?: string
-      }>
-      limit: number
-      offset: number
-      total: number
-    }>(`admin/v1/offers/${offerId}/investments?${queryParams.toString()}`)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest(`admin/v1/offers/${offerId}/investments${query ? `?${query}` : ''}`)
   },
 
-  /**
-   * Presign upload URL for media or document
-   */
-  presignUpload: async (
-    offerId: string,
-    payload: {
-      upload_type: 'media' | 'document'
-      file_name: string
-      mime_type: string
-      size_bytes: number
-      media_type?: 'IMAGE' | 'VIDEO'
-      document_kind?: 'BROCHURE' | 'MEMO' | 'PROJECTIONS' | 'VALUATION' | 'OTHER'
-    }
-  ): Promise<{
-    upload_url: string
-    key: string
-    required_headers: Record<string, string>
-    expires_in: number
-  }> => {
-    return apiRequest<{
-      upload_url: string
-      key: string
-      required_headers: Record<string, string>
-      expires_in: number
-    }>(`admin/v1/offers/${offerId}/uploads/presign`, {
+  // Media endpoints
+  presignUpload: async (offerId: string, payload: {
+    upload_type: 'media' | 'document'
+    file_name: string
+    mime_type: string
+    size_bytes: number
+    media_type?: 'IMAGE' | 'VIDEO'
+    document_kind?: string
+  }): Promise<{ upload_url: string; key: string; required_headers: Record<string, string>; expires_in: number }> => {
+    return apiRequest(`admin/v1/offers/${offerId}/uploads/presign`, {
       method: 'POST',
       body: JSON.stringify(payload),
     })
   },
 
-  /**
-   * Create media metadata after upload
-   */
-  createOfferMedia: async (
-    offerId: string,
-    payload: {
-      key: string
-      mime_type: string
-      size_bytes: number
-      type: 'IMAGE' | 'VIDEO'
-      sort_order?: number
-      is_cover?: boolean
-      visibility?: 'PUBLIC' | 'PRIVATE'
-      url?: string
-      width?: number
-      height?: number
-      duration_seconds?: number
-    }
-  ): Promise<{
-    id: string
-    offer_id: string
-    type: string
-    url?: string
+  createOfferMedia: async (offerId: string, payload: {
+    key: string
     mime_type: string
     size_bytes: number
-    sort_order: number
-    is_cover: boolean
-    created_at: string
+    type: 'IMAGE' | 'VIDEO'
+    sort_order?: number
+    is_cover?: boolean
+    visibility?: 'PUBLIC' | 'PRIVATE'
+    url?: string
     width?: number
     height?: number
     duration_seconds?: number
-  }> => {
-    return apiRequest<{
-      id: string
-      offer_id: string
-      type: string
-      url?: string
-      mime_type: string
-      size_bytes: number
-      sort_order: number
-      is_cover: boolean
-      created_at: string
-      width?: number
-      height?: number
-      duration_seconds?: number
-    }>(`admin/v1/offers/${offerId}/media`, {
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media`, {
       method: 'POST',
       body: JSON.stringify(payload),
     })
   },
 
-  /**
-   * Create document metadata after upload
-   */
-  createOfferDocument: async (
-    offerId: string,
-    payload: {
-      name: string
-      kind: 'BROCHURE' | 'MEMO' | 'PROJECTIONS' | 'VALUATION' | 'OTHER'
-      key: string
-      mime_type: string
-      size_bytes: number
-      visibility?: 'PUBLIC' | 'PRIVATE'
-      url?: string
-    }
-  ): Promise<{
-    id: string
-    offer_id: string
-    name: string
-    kind: string
-    url?: string
-    mime_type: string
-    size_bytes: number
-    created_at: string
-  }> => {
-    return apiRequest<{
-      id: string
-      offer_id: string
-      name: string
-      kind: string
-      url?: string
-      mime_type: string
-      size_bytes: number
-      created_at: string
-    }>(`admin/v1/offers/${offerId}/documents`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-  },
-
-  /**
-   * List media for an offer
-   */
   listOfferMedia: async (offerId: string): Promise<Array<{
     id: string
-    offer_id: string
     type: 'IMAGE' | 'VIDEO'
     url?: string
     mime_type: string
@@ -482,32 +406,41 @@ export const offersAdminApi = {
     sort_order: number
     is_cover: boolean
     created_at: string
-    width?: number
-    height?: number
-    duration_seconds?: number
   }>> => {
-    return apiRequest<Array<{
-      id: string
-      offer_id: string
-      type: 'IMAGE' | 'VIDEO'
-      url?: string
-      mime_type: string
-      size_bytes: number
-      sort_order: number
-      is_cover: boolean
-      created_at: string
-      width?: number
-      height?: number
-      duration_seconds?: number
-    }>>(`admin/v1/offers/${offerId}/media`)
+    return apiRequest(`admin/v1/offers/${offerId}/media`)
   },
 
-  /**
-   * List documents for an offer
-   */
+  reorderOfferMedia: async (offerId: string, items: Array<{ id: string; sort_order: number; is_cover?: boolean }>): Promise<void> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/reorder`, {
+      method: 'PATCH',
+      body: JSON.stringify({ items }),
+    })
+  },
+
+  deleteOfferMedia: async (offerId: string, mediaId: string): Promise<void> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/${mediaId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // Documents endpoints
+  createOfferDocument: async (offerId: string, payload: {
+    name: string
+    kind: string
+    key: string
+    mime_type: string
+    size_bytes: number
+    visibility?: 'PUBLIC' | 'PRIVATE'
+    url?: string
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/documents`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
   listOfferDocuments: async (offerId: string): Promise<Array<{
     id: string
-    offer_id: string
     name: string
     kind: string
     url?: string
@@ -515,47 +448,48 @@ export const offersAdminApi = {
     size_bytes: number
     created_at: string
   }>> => {
-    return apiRequest<Array<{
-      id: string
-      offer_id: string
-      name: string
-      kind: string
-      url?: string
-      mime_type: string
-      size_bytes: number
-      created_at: string
-    }>>(`admin/v1/offers/${offerId}/documents`)
+    return apiRequest(`admin/v1/offers/${offerId}/documents`)
   },
 
-  /**
-   * Reorder media items
-   */
-  reorderOfferMedia: async (
-    offerId: string,
-    items: Array<{ id: string; sort_order: number; is_cover?: boolean }>
-  ): Promise<void> => {
-    return apiRequest<void>(`admin/v1/offers/${offerId}/media/reorder`, {
-      method: 'PATCH',
-      body: JSON.stringify({ items }),
-    })
-  },
-
-  /**
-   * Delete media item
-   */
-  deleteOfferMedia: async (offerId: string, mediaId: string): Promise<void> => {
-    return apiRequest<void>(`admin/v1/offers/${offerId}/media/${mediaId}`, {
-      method: 'DELETE',
-    })
-  },
-
-  /**
-   * Delete document
-   */
   deleteOfferDocument: async (offerId: string, docId: string): Promise<void> => {
-    return apiRequest<void>(`admin/v1/offers/${offerId}/documents/${docId}`, {
+    return apiRequest(`admin/v1/offers/${offerId}/documents/${docId}`, {
       method: 'DELETE',
     })
+  },
+
+  // Marketing V1.1 endpoints
+  updateOfferMarketing: async (offerId: string, payload: UpdateMarketingPayload): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/marketing`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  seedOfferMarketingDefaults: async (offerId: string): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/marketing/seed-defaults`, {
+      method: 'POST',
+    })
+  },
+
+  setCoverMedia: async (offerId: string, mediaId: string): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/${mediaId}/set-cover`, {
+      method: 'POST',
+    })
+  },
+
+  setPromoVideo: async (offerId: string, mediaId: string): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/${mediaId}/set-promo-video`, {
+      method: 'POST',
+    })
+  },
+}
+
+/**
+ * System API
+ */
+export const systemApi = {
+  getStorageInfo: async (): Promise<{ enabled: boolean; provider?: string; bucket?: string }> => {
+    return apiRequest('admin/v1/system/storage')
   },
 }
 

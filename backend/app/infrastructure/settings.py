@@ -74,12 +74,8 @@ class Settings(BaseSettings):
     
     # CORS settings - can be strings (comma-separated) or lists
     # Lists are preferred, but strings from env vars are auto-parsed
-    CORS_ALLOW_ORIGINS: Union[str, List[str]] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-    ]
+    # Defaults to empty list - MUST be set via environment variable
+    CORS_ALLOW_ORIGINS: Union[str, List[str]] = []
     CORS_ALLOW_METHODS: Union[str, List[str]] = ["*"]  # Allow all methods for dev flexibility
     CORS_ALLOW_HEADERS: Union[str, List[str]] = [
         "Authorization",
@@ -97,7 +93,8 @@ class Settings(BaseSettings):
     CORS_ALLOW_CREDENTIALS: bool = True  # Allow credentials (cookies, Authorization headers) for frontend-admin uploads
     
     # Legacy: ALLOWED_ORIGINS (for backward compatibility)
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+    # Defaults to empty - MUST be set via environment variable
+    ALLOWED_ORIGINS: str = ""
 
     # API Configuration
     API_V1_PREFIX: str = "/api/v1"
@@ -106,7 +103,7 @@ class Settings(BaseSettings):
     
     # S3/R2 Storage Configuration
     STORAGE_PROVIDER: str = "s3"  # "s3" for AWS S3 or Cloudflare R2
-    S3_ENDPOINT_URL: str = ""  # Required for R2 (e.g., https://<account-id>.r2.cloudflarestorage.com), empty for AWS
+    S3_ENDPOINT_URL: str = ""  # Required for R2 (e.g., https://<account-id>.r2.cloudflarestorage.com), empty for AWS S3
     S3_REGION: str = "auto"  # "auto" for R2, or AWS region like "eu-west-1"
     S3_ACCESS_KEY_ID: str = ""
     S3_SECRET_ACCESS_KEY: str = ""
@@ -209,6 +206,31 @@ class Settings(BaseSettings):
         if self.OIDC_ISSUER_URL:
             return f"{self.OIDC_ISSUER_URL.rstrip('/')}/.well-known/jwks.json"
         return ""
+    
+    @property
+    def storage_enabled(self) -> bool:
+        """
+        Check if storage (S3/R2) is properly configured.
+        Requires: bucket, access_key_id, secret_access_key.
+        For R2: endpoint_url is also required.
+        For AWS: endpoint_url is optional (uses default AWS endpoints).
+        """
+        has_basic_config = bool(
+            self.S3_BUCKET and 
+            self.S3_BUCKET.strip() and
+            self.S3_ACCESS_KEY_ID and 
+            self.S3_ACCESS_KEY_ID.strip() and
+            self.S3_SECRET_ACCESS_KEY and 
+            self.S3_SECRET_ACCESS_KEY.strip()
+        )
+        
+        # If endpoint_url is provided, it must be non-empty (R2 requirement)
+        # If not provided, assume AWS (which doesn't require it)
+        if self.S3_ENDPOINT_URL:
+            return has_basic_config and bool(self.S3_ENDPOINT_URL.strip())
+        
+        # For AWS, basic config is enough
+        return has_basic_config
 
 
 @lru_cache()

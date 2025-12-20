@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { offersAdminApi, systemApi, parseApiError, type Offer, type UpdateOfferPayload } from "@/lib/api"
+import { normalizeMarketingPayload } from "@/lib/marketingPayload"
 
 interface Investment {
   id: string
@@ -91,6 +92,23 @@ export default function OfferDetailPage() {
   const [storageLoading, setStorageLoading] = useState(false)
   const [storageError, setStorageError] = useState<string | null>(null)
 
+  // Marketing V1.1 state
+  const [marketingForm, setMarketingForm] = useState<{
+    marketing_title?: string
+    marketing_subtitle?: string
+    location_label?: string
+    location_lat?: string
+    location_lng?: string
+    marketing_why?: Array<{ title: string; body: string }>
+    marketing_highlights?: string[]
+    marketing_breakdown?: { purchase_cost?: number; transaction_cost?: number; running_cost?: number }
+    marketing_metrics?: { gross_yield?: number; net_yield?: number; annualised_return?: number; investors_count?: number; days_left?: number }
+  }>({})
+  const [savingMarketing, setSavingMarketing] = useState(false)
+  const [marketingError, setMarketingError] = useState<string | null>(null)
+  const [marketingSuccess, setMarketingSuccess] = useState(false)
+  const [marketingTraceId, setMarketingTraceId] = useState<string | null>(null)
+
   useEffect(() => {
     if (offerId) {
       loadOffer()
@@ -130,6 +148,18 @@ export default function OfferDetailPage() {
         description: data.description || "",
         max_amount: data.max_amount,
         maturity_date: data.maturity_date || undefined,
+      })
+      // Initialize marketing form
+      setMarketingForm({
+        marketing_title: data.marketing_title || "",
+        marketing_subtitle: data.marketing_subtitle || "",
+        location_label: data.location_label || "",
+        location_lat: data.location_lat || "",
+        location_lng: data.location_lng || "",
+        marketing_why: data.marketing_why || [],
+        marketing_highlights: data.marketing_highlights || [],
+        marketing_breakdown: data.marketing_breakdown || {},
+        marketing_metrics: data.marketing_metrics || {},
       })
     } catch (err: any) {
       const apiError = parseApiError(err)
@@ -531,10 +561,124 @@ export default function OfferDetailPage() {
       await offersAdminApi.deleteOfferDocument(offerId, docId)
       await loadDocuments()
     } catch (err: any) {
+      console.error('[Offers Detail] Error deleting document:', err)
       const apiError = parseApiError(err)
       setDocumentsError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to delete document")
       setDocumentsTraceId(apiError.trace_id || null)
     }
+  }
+
+  // Marketing V1.1 handlers
+  const handleSaveMarketing = async () => {
+    if (!offerId) return
+    setSavingMarketing(true)
+    setMarketingError(null)
+    setMarketingSuccess(false)
+    setMarketingTraceId(null)
+
+    try {
+      // Normalize payload: convert empty strings to undefined, coerce types
+      const normalizedPayload = normalizeMarketingPayload(marketingForm)
+      
+      // Log payload in dev for debugging
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[Marketing] Normalized payload:', normalizedPayload)
+      }
+      
+      const updated = await offersAdminApi.updateOfferMarketing(offerId, normalizedPayload)
+      setOffer(updated)
+      setMarketingSuccess(true)
+      setTimeout(() => setMarketingSuccess(false), 3000)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      
+      // Format validation errors for display
+      let errorMessage = apiError.message || "Failed to save marketing"
+      
+      if (err.status === 422 && err.validationErrors && Array.isArray(err.validationErrors)) {
+        // Build detailed validation error message
+        const validationMessages = err.validationErrors.map((ve: any) => {
+          const field = ve.field || 'unknown'
+          const msg = ve.message || 'Validation error'
+          return `${field}: ${msg}`
+        })
+        errorMessage = `Validation errors:\n${validationMessages.join('\n')}`
+      } else if (apiError.code) {
+        errorMessage = `${apiError.code}: ${errorMessage}`
+      }
+      
+      setMarketingError(errorMessage)
+      setMarketingTraceId(apiError.trace_id || null)
+      
+      // Log full error in console for debugging
+      console.error('[Marketing] Save failed:', {
+        error: err,
+        apiError,
+        validationErrors: err.validationErrors,
+      })
+    } finally {
+      setSavingMarketing(false)
+    }
+  }
+
+  const handleSeedMarketingDefaults = async () => {
+    if (!offerId || !confirm('Seed default marketing values? This will only fill empty fields.')) return
+
+    try {
+      const updated = await offersAdminApi.seedOfferMarketingDefaults(offerId)
+      setOffer(updated)
+      setMarketingForm({
+        marketing_title: updated.marketing_title || "",
+        marketing_subtitle: updated.marketing_subtitle || "",
+        location_label: updated.location_label || "",
+        location_lat: updated.location_lat || "",
+        location_lng: updated.location_lng || "",
+        marketing_why: updated.marketing_why || [],
+        marketing_highlights: updated.marketing_highlights || [],
+        marketing_breakdown: updated.marketing_breakdown || {},
+        marketing_metrics: updated.marketing_metrics || {},
+      })
+      setMarketingSuccess(true)
+      setTimeout(() => setMarketingSuccess(false), 3000)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setMarketingError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to seed defaults")
+    }
+  }
+
+  const handleAddWhyItem = () => {
+    setMarketingForm({
+      ...marketingForm,
+      marketing_why: [...(marketingForm.marketing_why || []), { title: "", body: "" }],
+    })
+  }
+
+  const handleRemoveWhyItem = (index: number) => {
+    const why = [...(marketingForm.marketing_why || [])]
+    why.splice(index, 1)
+    setMarketingForm({ ...marketingForm, marketing_why: why })
+  }
+
+  const handleUpdateWhyItem = (index: number, field: 'title' | 'body', value: string) => {
+    const why = [...(marketingForm.marketing_why || [])]
+    why[index] = { ...why[index], [field]: value }
+    setMarketingForm({ ...marketingForm, marketing_why: why })
+  }
+
+  const handleAddHighlight = () => {
+    const highlight = prompt('Enter highlight text (max 40 chars):')
+    if (highlight && highlight.trim() && highlight.length <= 40) {
+      setMarketingForm({
+        ...marketingForm,
+        marketing_highlights: [...(marketingForm.marketing_highlights || []), highlight.trim()],
+      })
+    }
+  }
+
+  const handleRemoveHighlight = (index: number) => {
+    const highlights = [...(marketingForm.marketing_highlights || [])]
+    highlights.splice(index, 1)
+    setMarketingForm({ ...marketingForm, marketing_highlights: highlights })
   }
 
   const formatFileSize = (bytes: number): string => {
@@ -1167,6 +1311,304 @@ export default function OfferDetailPage() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Marketing V1.1 Section */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Marketing (V1.1)</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSeedMarketingDefaults}
+              className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 text-sm"
+            >
+              Seed Defaults
+            </button>
+            <button
+              onClick={handleSaveMarketing}
+              disabled={savingMarketing}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+            >
+              {savingMarketing ? "Saving..." : "Save Marketing"}
+            </button>
+          </div>
+        </div>
+
+        {marketingSuccess && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+            <div className="text-green-800 font-medium">Marketing saved successfully!</div>
+          </div>
+        )}
+
+        {marketingError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium mb-2">Marketing Save Failed</div>
+            <div className="text-red-700 text-sm whitespace-pre-line">{marketingError}</div>
+            {marketingTraceId && (
+              <div className="mt-2 text-xs text-red-600 font-mono">
+                Trace ID: {marketingTraceId}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-6">
+          {/* Basic Fields */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Marketing Title</label>
+              <input
+                type="text"
+                value={marketingForm.marketing_title || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, marketing_title: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                maxLength={255}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Marketing Subtitle</label>
+              <input
+                type="text"
+                value={marketingForm.marketing_subtitle || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, marketing_subtitle: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                maxLength={500}
+              />
+            </div>
+          </div>
+
+          {/* Location */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Location Label</label>
+              <input
+                type="text"
+                value={marketingForm.location_label || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, location_label: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                maxLength={255}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Latitude</label>
+              <input
+                type="number"
+                step="any"
+                value={marketingForm.location_lat || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, location_lat: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Longitude</label>
+              <input
+                type="number"
+                step="any"
+                value={marketingForm.location_lng || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, location_lng: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Why Invest */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-medium text-gray-700">Why Invest (max 6)</label>
+              <button
+                onClick={handleAddWhyItem}
+                disabled={(marketingForm.marketing_why || []).length >= 6}
+                className="text-blue-600 hover:text-blue-800 text-sm disabled:opacity-50"
+              >
+                + Add Card
+              </button>
+            </div>
+            <div className="space-y-2">
+              {(marketingForm.marketing_why || []).map((item, idx) => (
+                <div key={idx} className="border border-gray-200 rounded p-3 flex gap-2">
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      placeholder="Title (1-60 chars)"
+                      value={item.title}
+                      onChange={(e) => handleUpdateWhyItem(idx, 'title', e.target.value)}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      maxLength={60}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Body (1-240 chars)"
+                      value={item.body}
+                      onChange={(e) => handleUpdateWhyItem(idx, 'body', e.target.value)}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      maxLength={240}
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleRemoveWhyItem(idx)}
+                    className="text-red-600 hover:text-red-800 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Highlights */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-medium text-gray-700">Highlights (max 20)</label>
+              <button
+                onClick={handleAddHighlight}
+                disabled={(marketingForm.marketing_highlights || []).length >= 20}
+                className="text-blue-600 hover:text-blue-800 text-sm disabled:opacity-50"
+              >
+                + Add
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(marketingForm.marketing_highlights || []).map((highlight, idx) => (
+                <span
+                  key={idx}
+                  className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm flex items-center gap-2"
+                >
+                  {highlight}
+                  <button
+                    onClick={() => handleRemoveHighlight(idx)}
+                    className="text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Breakdown */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Investment Breakdown</label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Purchase Cost</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={marketingForm.marketing_breakdown?.purchase_cost || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_breakdown: { ...marketingForm.marketing_breakdown, purchase_cost: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Transaction Cost</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={marketingForm.marketing_breakdown?.transaction_cost || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_breakdown: { ...marketingForm.marketing_breakdown, transaction_cost: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Running Cost</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={marketingForm.marketing_breakdown?.running_cost || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_breakdown: { ...marketingForm.marketing_breakdown, running_cost: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Metrics */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Marketing Metrics</label>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Gross Yield (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={marketingForm.marketing_metrics?.gross_yield || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, gross_yield: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Net Yield (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={marketingForm.marketing_metrics?.net_yield || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, net_yield: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Annualised Return (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={marketingForm.marketing_metrics?.annualised_return || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, annualised_return: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Investors Count</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={marketingForm.marketing_metrics?.investors_count || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, investors_count: parseInt(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Days Left</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={marketingForm.marketing_metrics?.days_left || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, days_left: parseInt(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Investments List */}

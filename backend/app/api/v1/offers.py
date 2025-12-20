@@ -3,7 +3,7 @@ Client API - Offers (read-only listing + invest)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload, joinedload
 from uuid import UUID
 from typing import Optional, List
 from decimal import Decimal
@@ -11,6 +11,7 @@ import logging
 
 from app.infrastructure.database import get_db
 from app.core.offers.models import Offer, OfferStatus, OfferMedia, OfferDocument, MediaVisibility, DocumentVisibility
+from datetime import datetime, timezone
 from app.schemas.offers import OfferResponse, InvestInOfferRequest, OfferInvestmentResponse, MediaItemResponse, DocumentItemResponse
 from app.auth.dependencies import require_user_role
 from app.auth.oidc import Principal
@@ -53,12 +54,15 @@ def resolve_document_url(doc: OfferDocument) -> Optional[str]:
 
 
 def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
-    """Build OfferResponse with media and documents (PUBLIC only)"""
-    # Get PUBLIC media
+    """Build OfferResponse with media and documents (PUBLIC only)
+    
+    Uses explicit queries to avoid SQLAlchemy relationship ambiguity.
+    """
+    # Get PUBLIC media via explicit query (avoid relationship ambiguity)
     media_list = db.query(OfferMedia).filter(
         OfferMedia.offer_id == offer.id,
         OfferMedia.visibility == MediaVisibility.PUBLIC
-    ).order_by(OfferMedia.sort_order.asc(), OfferMedia.created_at.asc()).all()
+    ).order_by(OfferMedia.sort_order, OfferMedia.created_at).all()
     
     media_items = []
     for media in media_list:
@@ -96,6 +100,43 @@ def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
             created_at=doc.created_at.isoformat(),
         ))
     
+    # Resolve cover URL if cover_media_id is set (explicit query, no relationship)
+    cover_url = None
+    if offer.cover_media_id:
+        cover_media = db.query(OfferMedia).filter(
+            OfferMedia.id == offer.cover_media_id,
+            OfferMedia.visibility == MediaVisibility.PUBLIC
+        ).first()
+        if cover_media:
+            cover_url = resolve_media_url(cover_media)
+    
+    # Compute fill percentage
+    max_amount = float(offer.max_amount)
+    committed_amount = float(offer.committed_amount or offer.invested_amount)
+    fill_percentage = (committed_amount / max_amount * 100) if max_amount > 0 else 0.0
+    
+    # Compute days_left if maturity_date is set
+    days_left = None
+    if offer.maturity_date:
+        now = datetime.now(timezone.utc)
+        if offer.maturity_date.tzinfo is None:
+            # If naive datetime, assume UTC
+            maturity = offer.maturity_date.replace(tzinfo=timezone.utc)
+        else:
+            maturity = offer.maturity_date
+        delta = maturity - now
+        days_left = max(0, delta.days) if delta.total_seconds() > 0 else 0
+    
+    # Build marketing metrics with computed values
+    marketing_metrics = None
+    if offer.marketing_metrics:
+        marketing_metrics = dict(offer.marketing_metrics)
+        # Override days_left with computed value if not set
+        if days_left is not None and 'days_left' not in marketing_metrics:
+            marketing_metrics['days_left'] = days_left
+    elif days_left is not None:
+        marketing_metrics = {'days_left': days_left}
+    
     return OfferResponse(
         id=str(offer.id),
         code=offer.code,
@@ -112,6 +153,20 @@ def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
         updated_at=offer.updated_at.isoformat() if offer.updated_at else None,
         media=media_items,
         documents=doc_items,
+        # Marketing V1.1 fields
+        cover_media_id=str(offer.cover_media_id) if offer.cover_media_id else None,
+        promo_video_media_id=str(offer.promo_video_media_id) if offer.promo_video_media_id else None,
+        cover_url=cover_url,
+        location_label=offer.location_label,
+        location_lat=str(offer.location_lat) if offer.location_lat is not None else None,
+        location_lng=str(offer.location_lng) if offer.location_lng is not None else None,
+        marketing_title=offer.marketing_title,
+        marketing_subtitle=offer.marketing_subtitle,
+        marketing_why=offer.marketing_why if offer.marketing_why else None,
+        marketing_highlights=offer.marketing_highlights if offer.marketing_highlights else None,
+        marketing_breakdown=offer.marketing_breakdown if offer.marketing_breakdown else None,
+        marketing_metrics=marketing_metrics,
+        fill_percentage=round(fill_percentage, 2),
     )
 
 
@@ -137,6 +192,9 @@ async def list_offers(
         # Default to AED if no currency specified
         query = query.filter(Offer.currency == "AED")
     
+    # No need to eager load offer_media - we use explicit queries in build_offer_response
+    # This avoids SQLAlchemy relationship ambiguity issues
+    
     offers = query.order_by(Offer.created_at.desc()).limit(limit).offset(offset).all()
     
     return [build_offer_response(offer, db) for offer in offers]
@@ -154,7 +212,10 @@ async def get_offer(
     principal: Principal = Depends(require_user_role()),
 ) -> OfferResponse:
     """Get LIVE offer by ID"""
+    # No need to eager load offer_media - we use explicit queries in build_offer_response
+    # This avoids SQLAlchemy relationship ambiguity issues
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    
     if not offer:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

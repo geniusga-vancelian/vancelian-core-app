@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import Column, String, ForeignKey, Enum as SQLEnum, Numeric, Text, DateTime, Index, CheckConstraint, Integer, BigInteger, Boolean
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
+from sqlalchemy.orm import remote
 import enum
 from app.core.common.base_model import BaseModel
 
@@ -58,11 +59,82 @@ class Offer(BaseModel):
     status = Column(SQLEnum(OfferStatus, name="offer_status", create_constraint=True), nullable=False, default=OfferStatus.DRAFT, index=True)
     offer_metadata = Column('metadata', JSONB, nullable=True)  # Flexible JSONB metadata (DB column: metadata)
     
+    # Marketing V1.1 fields
+    cover_media_id = Column(UUID(as_uuid=True), ForeignKey("offer_media.id", name="fk_offers_cover_media_id"), nullable=True, index=True)  # Cover image media ID
+    promo_video_media_id = Column(UUID(as_uuid=True), ForeignKey("offer_media.id", name="fk_offers_promo_video_media_id"), nullable=True, index=True)  # Promo video media ID
+    location_label = Column(String(255), nullable=True)  # Location label (e.g., "Unit 2308, Binghatti Onyx, JVC, Dubai, UAE")
+    location_lat = Column(Numeric(10, 7), nullable=True)  # Latitude (decimal degrees)
+    location_lng = Column(Numeric(10, 7), nullable=True)  # Longitude (decimal degrees)
+    
+    # Marketing content (JSONB)
+    marketing_title = Column(String(255), nullable=True)  # Marketing title (e.g., "Two Bedroom Apartment in Binghatti Onyx")
+    marketing_subtitle = Column(String(500), nullable=True)  # Marketing subtitle
+    marketing_why = Column(JSONB, nullable=True)  # Why invest cards: [{"title": "...", "body": "..."}]
+    marketing_highlights = Column(JSONB, nullable=True)  # Highlights: ["2 Bedrooms", "Pool", "Near Mall"]
+    marketing_breakdown = Column(JSONB, nullable=True)  # Breakdown: {"purchase_cost": 173898.09, "transaction_cost": 25879.12, "running_cost": 38441.75}
+    marketing_metrics = Column(JSONB, nullable=True)  # Metrics: {"gross_yield": 8.06, "net_yield": 6.01, "annualised_return": 12.96, "investors_count": 162, "days_left": 245}
+    
     # Relationships
     investments = relationship("OfferInvestment", back_populates="offer", lazy="select")
     investment_intents = relationship("InvestmentIntent", back_populates="offer", lazy="select")
-    media = relationship("OfferMedia", back_populates="offer", cascade="all, delete-orphan", lazy="select")
+    
+    # offer_media: all media attached to this offer via Media.offer_id
+    # This is the ONLY ORM relationship between Offer and OfferMedia
+    # CRITICAL: Use explicit foreign_keys to prevent SQLAlchemy from detecting cover_media_id and promo_video_media_id
+    offer_media = relationship(
+        "OfferMedia",
+        foreign_keys="OfferMedia.offer_id",  # String reference to avoid circular import
+        primaryjoin="Offer.id==OfferMedia.offer_id",
+        cascade="all, delete-orphan",
+        lazy="select",
+        passive_deletes=True,
+    )
+    
     documents = relationship("OfferDocument", back_populates="offer", cascade="all, delete-orphan", lazy="select")
+    
+    # Backward compatibility alias (deprecated, use offer_media instead)
+    @property
+    def media(self):
+        """Backward compatibility: alias for offer_media"""
+        return self.offer_media
+    
+    # PROPERTIES (not ORM relationships) for cover_media and promo_video_media
+    # These avoid SQLAlchemy ambiguity by doing a simple lookup in offer_media
+    @property
+    def cover_media(self):
+        """
+        Get cover media by looking up cover_media_id in offer_media collection.
+        Returns None if cover_media_id is not set or offer_media is not loaded.
+        """
+        if not self.cover_media_id:
+            return None
+        # If offer_media is not loaded, return None (we can't query without a session)
+        if not hasattr(self, '_sa_instance_state') or 'offer_media' not in self._sa_instance_state.loaded_attrs:
+            # Check if offer_media is actually loaded (not just lazy)
+            if self.offer_media is None or (hasattr(self.offer_media, '__iter__') and not list(self.offer_media)):
+                return None
+        # Lookup in loaded offer_media collection
+        if self.offer_media:
+            return next((m for m in self.offer_media if m.id == self.cover_media_id), None)
+        return None
+    
+    @property
+    def promo_video_media(self):
+        """
+        Get promo video media by looking up promo_video_media_id in offer_media collection.
+        Returns None if promo_video_media_id is not set or offer_media is not loaded.
+        """
+        if not self.promo_video_media_id:
+            return None
+        # If offer_media is not loaded, return None (we can't query without a session)
+        if not hasattr(self, '_sa_instance_state') or 'offer_media' not in self._sa_instance_state.loaded_attrs:
+            # Check if offer_media is actually loaded (not just lazy)
+            if self.offer_media is None or (hasattr(self.offer_media, '__iter__') and not list(self.offer_media)):
+                return None
+        # Lookup in loaded offer_media collection
+        if self.offer_media:
+            return next((m for m in self.offer_media if m.id == self.promo_video_media_id), None)
+        return None
     
     # Table-level constraints
     __table_args__ = (
@@ -202,7 +274,23 @@ class OfferMedia(BaseModel):
     visibility = Column(SQLEnum(MediaVisibility, name="media_visibility", create_constraint=True), nullable=False, default=MediaVisibility.PUBLIC, index=True)
     
     # Relationships
-    offer = relationship("Offer", back_populates="media")
+    # offer: the offer this media belongs to (via Media.offer_id)
+    # CRITICAL FIX: SQLAlchemy detects multiple foreign key paths:
+    # 1. OfferMedia.offer_id -> Offer.id (the main relationship we want)
+    # 2. Offer.cover_media_id -> OfferMedia.id (reverse FK, detected automatically)
+    # 3. Offer.promo_video_media_id -> OfferMedia.id (reverse FK, detected automatically)
+    #
+    # SOLUTION: Use explicit foreign_keys to disambiguate. NO relationship for cover/promo.
+    # We only define the ONE relationship: offer_media.offer_id -> offers.id
+    offer = relationship(
+        "Offer",
+        back_populates="offer_media",
+        foreign_keys=[offer_id],  # Explicit: use ONLY this column
+        primaryjoin="OfferMedia.offer_id==Offer.id",  # Explicit join condition
+    )
+    
+    # Note: cover_for_offers and promo_for_offers are not needed as backrefs
+    # They would create ambiguity. Access via Offer.cover_media and Offer.promo_video_media instead.
     
     # Table-level constraints
     __table_args__ = (

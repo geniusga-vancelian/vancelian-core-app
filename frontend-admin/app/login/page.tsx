@@ -2,15 +2,11 @@
 
 /**
  * Admin Login Page
- * 
- * Expected working call:
- * POST http://localhost:8000/api/v1/auth/login
- * Body: { "email": "...", "password": "..." }
- * Content-Type: application/json
  */
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { getApiUrl } from "@/lib/config"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -25,13 +21,13 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      // Expected working call: POST http://localhost:8000/api/v1/auth/login
-      const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
+      // Use centralized config
+      const { getApiUrl } = await import('@/lib/config')
       // Trim email and password to avoid whitespace issues
       const trimmedEmail = email.trim()
       const trimmedPassword = password.trim()
       const requestBody = { email: trimmedEmail, password: trimmedPassword }
-      const requestUrl = `${apiBaseUrl}/api/v1/auth/login`
+      const requestUrl = getApiUrl('api/v1/auth/login')
 
       // DEV: Debug logging
       if (process.env.NODE_ENV === 'development') {

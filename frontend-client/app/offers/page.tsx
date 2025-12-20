@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { getToken, offersApi, type Offer } from "@/lib/api"
+import { OfferImageCarousel } from "@/components/offers/OfferImageCarousel"
 
 export default function OffersPage() {
   const router = useRouter()
@@ -41,15 +42,20 @@ export default function OffersPage() {
     }
   }
 
-  const getCoverImage = (offer: Offer): string | null => {
-    if (offer.media && offer.media.length > 0) {
-      const cover = offer.media.find(m => m.is_cover && m.type === 'IMAGE')
-      if (cover && cover.url) return cover.url
-      // Fallback to first image
-      const firstImage = offer.media.find(m => m.type === 'IMAGE')
-      if (firstImage && firstImage.url) return firstImage.url
-    }
-    return null
+  const getImages = (offer: Offer): Array<{ id: string; url: string | null; is_cover: boolean }> => {
+    if (!offer.media || offer.media.length === 0) return []
+    
+    // Filter only images (include those without URL - will fetch presigned URL)
+    const images = offer.media
+      .filter(m => m.type === 'IMAGE')
+      .map(m => ({ id: m.id, url: m.url || null, is_cover: m.is_cover || false }))
+    
+    // Sort: cover image first, then by sort_order if available
+    return images.sort((a, b) => {
+      if (a.is_cover) return -1
+      if (b.is_cover) return 1
+      return 0
+    })
   }
 
   const getProgressPercentage = (offer: Offer): number => {
@@ -91,7 +97,7 @@ export default function OffersPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {offers.map((offer) => {
-            const coverImage = getCoverImage(offer)
+            const images = getImages(offer)
             const progress = getProgressPercentage(offer)
             const remaining = parseFloat(offer.remaining_amount)
             const isFull = remaining <= 0
@@ -102,20 +108,8 @@ export default function OffersPage() {
                 href={`/offers/${offer.id}`}
                 className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
               >
-                {/* Cover Image */}
-                {coverImage ? (
-                  <div className="w-full h-48 bg-gray-200 overflow-hidden">
-                    <img
-                      src={coverImage}
-                      alt={offer.name}
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                ) : (
-                  <div className="w-full h-48 bg-gradient-to-br from-blue-100 to-purple-100 flex items-center justify-center">
-                    <span className="text-gray-400 text-sm">No image</span>
-                  </div>
-                )}
+                {/* Image Section - Carousel if multiple, single if one */}
+                <OfferImageCarousel images={images} offerName={offer.name} offerId={offer.id} />
 
                 <div className="p-6">
                   {/* Header */}

@@ -8,6 +8,8 @@ from typing import Optional
 from uuid import UUID
 from datetime import timedelta
 from app.infrastructure.settings import get_settings
+from app.services.storage.storage_client import assert_configured, create_s3_client
+from app.services.storage.exceptions import StorageNotConfiguredError
 
 
 class S3Service:
@@ -21,17 +23,8 @@ class S3Service:
     def client(self):
         """Lazy initialization of boto3 client"""
         if self._client is None:
-            config = {
-                'aws_access_key_id': self.settings.S3_ACCESS_KEY_ID,
-                'aws_secret_access_key': self.settings.S3_SECRET_ACCESS_KEY,
-                'region_name': self.settings.S3_REGION,
-            }
-            
-            # For R2, we need to set endpoint_url
-            if self.settings.S3_ENDPOINT_URL:
-                config['endpoint_url'] = self.settings.S3_ENDPOINT_URL
-            
-            self._client = boto3.client('s3', **config)
+            # Use centralized client creation with proper error handling
+            self._client = create_s3_client(self.settings)
         
         return self._client
     
@@ -53,14 +46,11 @@ class S3Service:
             Presigned PUT URL
         
         Raises:
-            ValueError: If S3 is not configured or if boto3 fails
+            StorageNotConfiguredError: If S3 is not configured
+            ValueError: If boto3 fails
         """
-        # Validate S3 configuration
-        if not self.settings.S3_BUCKET:
-            raise ValueError(
-                "S3 storage is not configured. Please set S3_BUCKET environment variable. "
-                "See docs/STORAGE_R2_SETUP.md for setup instructions."
-            )
+        # Validate S3 configuration using centralized check
+        assert_configured(self.settings)
         
         expires_in = expires_in or self.settings.S3_PRESIGN_EXPIRES_SECONDS
         
@@ -79,7 +69,7 @@ class S3Service:
             raise ValueError(f"Failed to generate presigned PUT URL: {str(e)}")
         except Exception as e:
             # Catch ParamValidationError and other boto3 errors
-            raise ValueError(f"S3 configuration error: {str(e)}")
+            raise ValueError(f"S3 operation error: {str(e)}")
     
     def generate_presigned_get_url(
         self,
@@ -97,14 +87,11 @@ class S3Service:
             Presigned GET URL
         
         Raises:
-            ValueError: If S3 is not configured or if boto3 fails
+            StorageNotConfiguredError: If S3 is not configured
+            ValueError: If boto3 fails
         """
-        # Validate S3 configuration
-        if not self.settings.S3_BUCKET:
-            raise ValueError(
-                "S3 storage is not configured. Please set S3_BUCKET environment variable. "
-                "See docs/STORAGE_R2_SETUP.md for setup instructions."
-            )
+        # Validate S3 configuration using centralized check
+        assert_configured(self.settings)
         
         expires_in = expires_in or self.settings.S3_PRESIGN_EXPIRES_SECONDS
         
@@ -122,7 +109,7 @@ class S3Service:
             raise ValueError(f"Failed to generate presigned GET URL: {str(e)}")
         except Exception as e:
             # Catch ParamValidationError and other boto3 errors
-            raise ValueError(f"S3 configuration error: {str(e)}")
+            raise ValueError(f"S3 operation error: {str(e)}")
     
     def build_object_key(
         self,

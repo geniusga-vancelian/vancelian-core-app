@@ -1,0 +1,100 @@
+{
+  "timestamp": "2025-12-19T23:55:39.427771",
+  "database_url": "postgres:5432/vancelian_core",
+  "database_name": "vancelian_core",
+  "postgres_version": "PostgreSQL 15.15 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+  "overall_status": "PASS",
+  "checks": [
+    {
+      "name": "Alembic Migrations",
+      "status": "PASS",
+      "message": "Current Alembic revision: f7e8d9c0b1a2",
+      "details": {
+        "current_version": "f7e8d9c0b1a2"
+      }
+    },
+    {
+      "name": "Offers Table",
+      "status": "PASS",
+      "message": "All required columns present (10/10)",
+      "details": {
+        "found_columns": [
+          "id",
+          "cover_media_id",
+          "promo_video_media_id",
+          "marketing_title",
+          "marketing_subtitle",
+          "location_label",
+          "marketing_why",
+          "marketing_highlights",
+          "marketing_breakdown",
+          "marketing_metrics"
+        ],
+        "total_columns": 24
+      }
+    },
+    {
+      "name": "Offer Media Table",
+      "status": "PASS",
+      "message": "All required columns present (7/7)",
+      "details": {
+        "found_columns": [
+          "id",
+          "offer_id",
+          "type",
+          "key",
+          "mime_type",
+          "size_bytes",
+          "created_at"
+        ]
+      }
+    },
+    {
+      "name": "Foreign Keys",
+      "status": "PASS",
+      "message": "All required foreign keys present (3/3)",
+      "details": {
+        "found": [
+          {
+            "constraint": "fk_offer_media_offer_id",
+            "table": "offer_media",
+            "column": "offer_id",
+            "references": "offers.id",
+            "on_delete": "NO ACTION"
+          },
+          {
+            "constraint": "fk_offers_cover_media_id",
+            "table": "offers",
+            "column": "cover_media_id",
+            "references": "offer_media.id",
+            "on_delete": "SET NULL"
+          },
+          {
+            "constraint": "fk_offers_promo_video_media_id",
+            "table": "offers",
+            "column": "promo_video_media_id",
+            "references": "offer_media.id",
+            "on_delete": "SET NULL"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Indexes",
+      "status": "PASS",
+      "message": "All recommended indexes present (3/3)",
+      "details": {
+        "found": [
+          "offer_media.offer_id",
+          "offers.cover_media_id",
+          "offers.promo_video_media_id"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "pass": 5,
+    "fail": 0,
+    "warn": 0
+  }
+}

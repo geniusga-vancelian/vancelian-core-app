@@ -2,7 +2,7 @@
 Pydantic schemas for Offers API
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from decimal import Decimal
 from datetime import datetime
 from typing import Optional, Dict, Any, List
@@ -84,6 +84,21 @@ class OfferResponse(BaseModel):
     updated_at: Optional[str] = Field(None, description="Last update timestamp (ISO format)")
     media: Optional[List[MediaItemResponse]] = Field(default=[], description="Public media items (PUBLIC visibility only)")
     documents: Optional[List[DocumentItemResponse]] = Field(default=[], description="Public documents (PUBLIC visibility only)")
+    
+    # Marketing V1.1 fields
+    cover_media_id: Optional[str] = Field(None, description="Cover image media ID")
+    promo_video_media_id: Optional[str] = Field(None, description="Promo video media ID")
+    cover_url: Optional[str] = Field(None, description="Cover image URL (resolved)")
+    location_label: Optional[str] = Field(None, description="Location label")
+    location_lat: Optional[str] = Field(None, description="Latitude (decimal degrees)")
+    location_lng: Optional[str] = Field(None, description="Longitude (decimal degrees)")
+    marketing_title: Optional[str] = Field(None, description="Marketing title")
+    marketing_subtitle: Optional[str] = Field(None, description="Marketing subtitle")
+    marketing_why: Optional[List[Dict[str, str]]] = Field(None, description="Why invest cards: [{\"title\": \"...\", \"body\": \"...\"}]")
+    marketing_highlights: Optional[List[str]] = Field(None, description="Highlights: [\"2 Bedrooms\", \"Pool\", ...]")
+    marketing_breakdown: Optional[Dict[str, Any]] = Field(None, description="Breakdown: {\"purchase_cost\": ..., \"transaction_cost\": ..., \"running_cost\": ...}")
+    marketing_metrics: Optional[Dict[str, Any]] = Field(None, description="Metrics: {\"gross_yield\": ..., \"net_yield\": ..., \"annualised_return\": ..., \"investors_count\": ..., \"days_left\": ...}")
+    fill_percentage: Optional[float] = Field(None, description="Fill percentage (committed_amount / max_amount * 100)")
 
     class Config:
         from_attributes = True
@@ -187,4 +202,67 @@ class DownloadUrlResponse(BaseModel):
     """Response with presigned download URL"""
     download_url: str = Field(..., description="Presigned GET URL")
     expires_in: int = Field(..., description="Expiration time in seconds")
+
+
+# Marketing V1.1 schemas
+class MarketingWhyItem(BaseModel):
+    """Why invest card item"""
+    title: str = Field(..., min_length=1, max_length=60, description="Card title (1-60 chars)")
+    body: str = Field(..., min_length=1, max_length=240, description="Card body (1-240 chars)")
+
+
+class MarketingBreakdown(BaseModel):
+    """Investment breakdown"""
+    purchase_cost: Optional[Decimal] = Field(None, ge=0, description="Purchase cost")
+    transaction_cost: Optional[Decimal] = Field(None, ge=0, description="Transaction cost")
+    running_cost: Optional[Decimal] = Field(None, ge=0, description="Running cost")
+
+
+class MarketingMetrics(BaseModel):
+    """Marketing metrics"""
+    gross_yield: Optional[Decimal] = Field(None, ge=0, le=100, description="Gross yield percentage (0-100)")
+    net_yield: Optional[Decimal] = Field(None, ge=0, le=100, description="Net yield percentage (0-100)")
+    annualised_return: Optional[Decimal] = Field(None, ge=0, le=100, description="Annualised return percentage (0-100)")
+    investors_count: Optional[int] = Field(None, ge=0, description="Number of investors")
+    days_left: Optional[int] = Field(None, ge=0, description="Days until maturity")
+
+
+class OfferMarketingUpdateIn(BaseModel):
+    """Admin request to update offer marketing fields"""
+    cover_media_id: Optional[UUID] = Field(None, description="Cover image media ID")
+    promo_video_media_id: Optional[UUID] = Field(None, description="Promo video media ID")
+    location_label: Optional[str] = Field(None, max_length=255, description="Location label")
+    location_lat: Optional[Decimal] = Field(None, description="Latitude (decimal degrees)")
+    location_lng: Optional[Decimal] = Field(None, description="Longitude (decimal degrees)")
+    marketing_title: Optional[str] = Field(None, max_length=255, description="Marketing title")
+    marketing_subtitle: Optional[str] = Field(None, max_length=500, description="Marketing subtitle")
+    marketing_why: Optional[List[MarketingWhyItem]] = Field(None, max_length=6, description="Why invest cards (max 6)")
+    marketing_highlights: Optional[List[str]] = Field(None, max_length=20, description="Highlights list (max 20 items, 1-40 chars each)")
+    marketing_breakdown: Optional[MarketingBreakdown] = Field(None, description="Investment breakdown")
+    marketing_metrics: Optional[MarketingMetrics] = Field(None, description="Marketing metrics")
+    
+    @field_validator('marketing_highlights')
+    @classmethod
+    def validate_highlights(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """Validate highlights: max 20 items, each 1-40 chars"""
+        if v is None:
+            return v
+        if len(v) > 20:
+            raise ValueError("marketing_highlights must have at most 20 items")
+        for item in v:
+            if not item or len(item.strip()) == 0:
+                raise ValueError("Each highlight must be non-empty")
+            if len(item) > 40:
+                raise ValueError("Each highlight must be at most 40 characters")
+        return v
+    
+    @field_validator('marketing_why')
+    @classmethod
+    def validate_why(cls, v: Optional[List[MarketingWhyItem]]) -> Optional[List[MarketingWhyItem]]:
+        """Validate why invest: max 6 items"""
+        if v is None:
+            return v
+        if len(v) > 6:
+            raise ValueError("marketing_why must have at most 6 items")
+        return v
 

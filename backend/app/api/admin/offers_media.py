@@ -21,18 +21,33 @@ from app.schemas.offers import (
 from app.auth.dependencies import require_admin_role
 from app.auth.oidc import Principal
 from app.services.storage.s3_service import get_s3_service
+from app.services.storage.exceptions import StorageNotConfiguredError
 from app.infrastructure.settings import get_settings
+from app.utils.trace_id import get_trace_id
+from fastapi import Request
 
 router = APIRouter()
 settings = get_settings()
 
 
-def resolve_media_url(media: OfferMedia) -> Optional[str]:
-    """Resolve media URL (public CDN or None for presigned)"""
+def resolve_media_url(media: OfferMedia, generate_presigned: bool = False) -> Optional[str]:
+    """Resolve media URL (public CDN, presigned, or None)
+    
+    Args:
+        media: OfferMedia object
+        generate_presigned: If True and no public URL exists, generate a presigned GET URL
+    """
     if media.url:
         return media.url
     if settings.S3_PUBLIC_BASE_URL:
         return f"{settings.S3_PUBLIC_BASE_URL.rstrip('/')}/{media.key}"
+    if generate_presigned:
+        try:
+            s3_service = get_s3_service()
+            return s3_service.generate_presigned_get_url(key=media.key)
+        except (StorageNotConfiguredError, Exception):
+            # If storage not configured or error, return None
+            return None
     return None
 
 
@@ -54,6 +69,7 @@ def resolve_document_url(doc: OfferDocument) -> Optional[str]:
 async def presign_upload(
     offer_id: UUID,
     request: PresignUploadRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_admin_role()),
 ) -> PresignUploadResponse:
@@ -103,11 +119,27 @@ async def presign_upload(
             key=key,
             mime_type=request.mime_type,
         )
-    except ValueError as e:
-        # S3 not configured or boto3 error
+    except StorageNotConfiguredError as e:
+        # Storage not configured - return 412 Precondition Failed
+        trace_id = get_trace_id(http_request)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"S3_STORAGE_NOT_CONFIGURED: {str(e)}"
+            status_code=status.HTTP_412_PRECONDITION_FAILED,
+            detail={
+                "code": e.code,
+                "message": e.message,
+                "trace_id": trace_id,
+            }
+        )
+    except ValueError as e:
+        # Other boto3 errors
+        trace_id = get_trace_id(http_request)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "STORAGE_ERROR",
+                "message": str(e),
+                "trace_id": trace_id,
+            }
         )
     
     return PresignUploadResponse(
@@ -158,6 +190,18 @@ async def create_media(
             detail=f"Invalid visibility: {request.visibility}. Expected PUBLIC or PRIVATE"
         )
     
+    # Enforce: only one VIDEO per offer
+    if media_type == MediaType.VIDEO:
+        existing_video = db.query(OfferMedia).filter(
+            OfferMedia.offer_id == offer_id,
+            OfferMedia.type == MediaType.VIDEO
+        ).first()
+        if existing_video:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="OFFER_VIDEO_ALREADY_EXISTS: Only one promo video is allowed per offer. Delete the existing video first."
+            )
+    
     # If this is set as cover, unset other covers
     if request.is_cover:
         db.query(OfferMedia).filter(
@@ -184,8 +228,8 @@ async def create_media(
     db.commit()
     db.refresh(media)
     
-    # Resolve URL
-    url = resolve_media_url(media)
+    # Resolve URL (generate presigned if no public URL)
+    url = resolve_media_url(media, generate_presigned=True)
     
     return MediaItemResponse(
         id=str(media.id),
@@ -298,7 +342,7 @@ async def list_media(
     
     result = []
     for media in media_list:
-        url = resolve_media_url(media)
+        url = resolve_media_url(media, generate_presigned=True)
         result.append(MediaItemResponse(
             id=str(media.id),
             type=media.type.value,
@@ -438,6 +482,12 @@ async def delete_media(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MEDIA_NOT_FOUND"
         )
+    
+    # If this media is used as cover or promo, nullify those references first
+    if offer.cover_media_id == media_id:
+        offer.cover_media_id = None
+    if offer.promo_video_media_id == media_id:
+        offer.promo_video_media_id = None
     
     db.delete(media)
     db.commit()

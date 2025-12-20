@@ -53,6 +53,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: vancelian-backend-dev
+    env_file:
+      - .env.dev
     environment:
       ENV: development
       DATABASE_URL: postgresql://vancelian:vancelian_password@postgres:5432/vancelian_core
