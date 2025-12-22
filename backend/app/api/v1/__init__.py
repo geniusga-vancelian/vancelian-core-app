@@ -10,6 +10,7 @@ from app.api.v1.investments import router as investments_router
 from app.api.v1.offers import router as offers_router
 from app.api.v1.offers_media import router as offers_media_router
 from app.api.v1.articles import router as articles_router
+from app.api.v1.partners import router as partners_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.me import router as me_router
 
@@ -37,4 +38,5 @@ router.include_router(investments_router)
 router.include_router(offers_router)
 router.include_router(offers_media_router)
 router.include_router(articles_router)
+router.include_router(partners_router)
 

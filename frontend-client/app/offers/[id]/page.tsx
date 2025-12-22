@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
-import { getToken, apiRequest, offersApi, articlesApi, type Offer, type InvestInOfferResponse, type ArticleListItem } from "@/lib/api"
+import { getToken, apiRequest, offersApi, articlesApi, partnersApi, type Offer, type InvestInOfferResponse, type ArticleListItem, type PartnerListItem } from "@/lib/api"
 import { OfferMediaHero } from "@/components/offers/OfferMediaHero"
 import { OfferKpiCard } from "@/components/offers/OfferKpiCard"
 import { OfferContentSections } from "@/components/offers/OfferContentSections"
@@ -26,6 +26,17 @@ export default function OfferDetailPage() {
   const [wallet, setWallet] = useState<WalletBalance | null>(null)
   const [relatedOffers, setRelatedOffers] = useState<Offer[]>([])
   const [offerArticles, setOfferArticles] = useState<ArticleListItem[]>([])
+  const [offerPartners, setOfferPartners] = useState<PartnerListItem[]>([])
+  const [timelineEvents, setTimelineEvents] = useState<Array<{
+    id: string
+    title: string
+    description: string
+    occurred_at: string | null
+    sort_order: number
+    article: { id: string; title: string; slug: string; published_at: string | null; cover_url: string | null } | null
+    created_at: string
+    updated_at: string | null
+  }>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [traceId, setTraceId] = useState<string | null>(null)
@@ -91,6 +102,24 @@ export default function OfferDetailPage() {
       } catch {
         // Ignore errors for articles (optional feature)
         setOfferArticles([])
+      }
+
+      // Load partners linked to this offer
+      try {
+        const partners = await partnersApi.getOfferPartners(offerId, { limit: 6 })
+        setOfferPartners(partners)
+      } catch {
+        // Ignore errors for partners (optional feature)
+        setOfferPartners([])
+      }
+
+      // Load timeline events
+      try {
+        const timeline = await offersApi.getOfferTimeline(offerId)
+        setTimelineEvents(timeline)
+      } catch {
+        // Ignore errors for timeline (optional feature)
+        setTimelineEvents([])
       }
     } catch (err: any) {
       setError(err.message || "Failed to load offer")
@@ -236,6 +265,64 @@ export default function OfferDetailPage() {
             relatedOffers={relatedOffers}
           />
 
+          {/* Project Progress Timeline */}
+          {timelineEvents.length > 0 && (
+            <div className="border-t border-gray-200 pt-8">
+              <h2 className="text-2xl font-semibold mb-6">Project Progress</h2>
+              <div className="relative">
+                {/* Timeline line */}
+                <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-200"></div>
+                
+                {/* Timeline events */}
+                <div className="space-y-6">
+                  {timelineEvents.slice(0, 8).map((event, index) => (
+                    <div key={event.id} className="relative flex gap-4">
+                      {/* Dot */}
+                      <div className="relative z-10 flex-shrink-0">
+                        <div className="w-8 h-8 rounded-full bg-blue-600 border-4 border-white shadow-md flex items-center justify-center">
+                          <div className="w-2 h-2 rounded-full bg-white"></div>
+                        </div>
+                      </div>
+                      
+                      {/* Content card */}
+                      <div className="flex-1 bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex items-start justify-between gap-4 mb-2">
+                          <h3 className="font-semibold text-lg">{event.title}</h3>
+                          {event.occurred_at && (
+                            <span className="text-sm text-gray-500 whitespace-nowrap">
+                              {new Date(event.occurred_at).toLocaleDateString('en-US', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                              })}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-gray-700 text-sm mb-3">{event.description}</p>
+                        {event.article && (
+                          <Link
+                            href={`/blog/${event.article.slug}`}
+                            className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                          >
+                            Read article →
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              
+              {timelineEvents.length > 8 && (
+                <div className="mt-6 text-center">
+                  <p className="text-sm text-gray-500">
+                    Showing 8 of {timelineEvents.length} updates
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* News / Updates Section */}
           {offerArticles.length > 0 && (
             <div className="border-t border-gray-200 pt-8">
@@ -284,6 +371,48 @@ export default function OfferDetailPage() {
             <div className="border-t border-gray-200 pt-8">
               <h2 className="text-2xl font-semibold mb-4">News & Updates</h2>
               <p className="text-gray-500 text-sm">No updates available for this offer yet.</p>
+            </div>
+          )}
+
+          {/* Trusted Partners Section */}
+          {offerPartners.length > 0 && (
+            <div className="border-t border-gray-200 pt-8">
+              <h2 className="text-2xl font-semibold mb-6">Trusted Partners</h2>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {offerPartners.map((partner) => (
+                  <Link
+                    key={partner.id}
+                    href={`/partners/${partner.code}`}
+                    className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
+                  >
+                    {partner.cover_image_url || partner.ceo_photo_url ? (
+                      <img
+                        src={partner.cover_image_url || partner.ceo_photo_url}
+                        alt={partner.trade_name || partner.legal_name}
+                        className="w-full h-32 object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-32 bg-gray-100 flex items-center justify-center">
+                        <span className="text-gray-400 text-sm">No image</span>
+                      </div>
+                    )}
+                    <div className="p-4">
+                      <h3 className="font-semibold mb-1 text-sm">{partner.trade_name || partner.legal_name}</h3>
+                      {partner.description_markdown && (
+                        <p className="text-xs text-gray-600 line-clamp-2 mb-2">
+                          {partner.description_markdown.replace(/[#*\[\]()]/g, '').substring(0, 100)}...
+                        </p>
+                      )}
+                      {partner.city && partner.country && (
+                        <p className="text-xs text-gray-500">{partner.city}, {partner.country}</p>
+                      )}
+                      <div className="mt-2 text-blue-600 hover:text-blue-800 text-xs font-medium">
+                        View profile →
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
             </div>
           )}
         </div>

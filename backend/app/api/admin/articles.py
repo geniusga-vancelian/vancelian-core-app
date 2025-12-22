@@ -18,6 +18,7 @@ from app.schemas.articles import (
     ArticleAdminListItem,
     ArticleAdminDetail,
     ArticleLinkOffersRequest,
+    ArticleLinkOfferRequest,
 )
 from app.auth.dependencies import require_admin_role
 from app.auth.oidc import Principal
@@ -514,6 +515,104 @@ async def link_article_offers(
     
     # Replace offers relationship
     article.offers = offers
+    db.commit()
+    db.refresh(article)
+    
+    # Get media list
+    from app.core.articles.models import ArticleMedia
+    from app.schemas.articles import ArticleMediaOut
+    media_list = db.query(ArticleMedia).filter(
+        ArticleMedia.article_id == article_id
+    ).order_by(ArticleMedia.created_at).all()
+    
+    media_out = [
+        ArticleMediaOut(
+            id=str(m.id),
+            type=m.type.value,
+            key=m.key,
+            url=m.url,
+            mime_type=m.mime_type,
+            size_bytes=m.size_bytes,
+            width=m.width,
+            height=m.height,
+            duration_seconds=m.duration_seconds,
+            created_at=m.created_at.isoformat(),
+        )
+        for m in media_list
+    ]
+    
+    # Get linked offer IDs
+    offer_ids_result = [str(offer.id) for offer in article.offers] if article.offers else []
+    
+    return ArticleAdminDetail(
+        id=str(article.id),
+        slug=article.slug,
+        status=article.status,
+        title=article.title,
+        subtitle=article.subtitle,
+        excerpt=article.excerpt,
+        content_markdown=article.content_markdown,
+        content_html=article.content_html,
+        cover_media_id=str(article.cover_media_id) if article.cover_media_id else None,
+        promo_video_media_id=str(article.promo_video_media_id) if article.promo_video_media_id else None,
+        author_name=article.author_name,
+        published_at=article.published_at.isoformat() if article.published_at else None,
+        created_at=article.created_at.isoformat(),
+        updated_at=article.updated_at.isoformat() if article.updated_at else None,
+        seo_title=article.seo_title,
+        seo_description=article.seo_description,
+        tags=article.tags if article.tags else [],
+        is_featured=article.is_featured,
+        allow_comments=article.allow_comments,
+        media=media_out,
+        offer_ids=offer_ids_result,
+    )
+
+
+@router.put(
+    "/articles/{article_id}/offer",
+    response_model=ArticleAdminDetail,
+    summary="Link/unlink a single offer to article",
+    description="Link a single offer to this article, or unlink if offer_id is null. Replaces any existing links. Requires ADMIN role.",
+)
+async def link_article_offer(
+    article_id: UUID,
+    request: ArticleLinkOfferRequest,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_admin_role()),
+) -> ArticleAdminDetail:
+    """Link/unlink a single offer to article"""
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="ARTICLE_NOT_FOUND"
+        )
+    
+    # Convert offer_ids list (empty or single item)
+    offer_ids_list = [request.offer_id] if request.offer_id else []
+    
+    # Validate offer ID exists if provided
+    if request.offer_id:
+        try:
+            offer_uuid = UUID(request.offer_id)
+            offer = db.query(Offer).filter(Offer.id == offer_uuid).first()
+            if not offer:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="OFFER_NOT_FOUND"
+                )
+            # Replace offers relationship (single offer or empty list)
+            article.offers = [offer]
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_OFFER_ID"
+            )
+    else:
+        # Unlink: clear all offers
+        article.offers = []
+    
     db.commit()
     db.refresh(article)
     

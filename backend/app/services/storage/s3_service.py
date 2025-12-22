@@ -177,6 +177,53 @@ class S3Service:
         
         return key
     
+    def build_partner_object_key(
+        self,
+        partner_id: UUID,
+        file_name: str,
+        upload_type: str,  # "media", "document", or "portfolio"
+        project_id: Optional[UUID] = None,
+    ) -> str:
+        """
+        Build S3 object key for partner media/documents with prefix and partner_id
+        
+        Args:
+            partner_id: Partner UUID
+            file_name: Original file name (will be sanitized)
+            upload_type: "media", "document", or "portfolio"
+            project_id: Portfolio project UUID (required if upload_type="portfolio")
+        
+        Returns:
+            Full S3 object key (e.g., "partners/{partner_id}/media/image.jpg" or "partners/{partner_id}/portfolio/{project_id}/image.jpg")
+        """
+        import os
+        import re
+        import uuid as uuid_module
+        
+        # Sanitize file name
+        safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', os.path.basename(file_name))
+        
+        # Extract extension
+        _, ext = os.path.splitext(safe_name)
+        safe_name_without_ext = safe_name[:-(len(ext))] if ext else safe_name
+        
+        # Generate unique ID to avoid collisions
+        unique_id = str(uuid_module.uuid4())[:8]
+        safe_name_with_ext = f"{safe_name_without_ext}_{unique_id}{ext}"
+        
+        # Use PARTNERS_KEY_PREFIX if set, otherwise default to "partners"
+        prefix = getattr(self.settings, 'PARTNERS_KEY_PREFIX', 'partners')
+        
+        # Build key with prefix
+        if upload_type == "portfolio":
+            if not project_id:
+                raise ValueError("project_id is required for portfolio uploads")
+            key = f"{prefix}/{str(partner_id)}/portfolio/{str(project_id)}/{safe_name_with_ext}"
+        else:
+            key = f"{prefix}/{str(partner_id)}/{upload_type}/{safe_name_with_ext}"
+        
+        return key
+    
     def validate_mime_type(self, mime_type: str, upload_type: str, media_type: Optional[str] = None) -> bool:
         """
         Validate MIME type based on upload type and media type

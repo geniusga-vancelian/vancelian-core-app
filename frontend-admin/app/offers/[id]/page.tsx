@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import { offersAdminApi, systemApi, parseApiError, type Offer, type UpdateOfferPayload } from "@/lib/api"
 import { normalizeMarketingPayload } from "@/lib/marketingPayload"
+import { ArticlePicker } from "@/components/ArticlePicker"
 
 interface Investment {
   id: string
@@ -108,6 +109,34 @@ export default function OfferDetailPage() {
   const [marketingError, setMarketingError] = useState<string | null>(null)
   const [marketingSuccess, setMarketingSuccess] = useState(false)
   const [marketingTraceId, setMarketingTraceId] = useState<string | null>(null)
+
+  // Timeline state
+  const [timelineEvents, setTimelineEvents] = useState<Array<{
+    id: string
+    title: string
+    description: string
+    occurred_at: string | null
+    sort_order: number
+    article: { id: string; title: string; slug: string; published_at: string | null; cover_url: string | null } | null
+    created_at: string
+    updated_at: string | null
+  }>>([])
+  const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineError, setTimelineError] = useState<string | null>(null)
+  const [showTimelineModal, setShowTimelineModal] = useState(false)
+  const [editingEventId, setEditingEventId] = useState<string | null>(null)
+  const [timelineForm, setTimelineForm] = useState<{
+    title: string
+    description: string
+    occurred_at: string
+    article_id: string | null
+  }>({
+    title: "",
+    description: "",
+    occurred_at: "",
+    article_id: null,
+  })
+  const [savingTimeline, setSavingTimeline] = useState(false)
 
   useEffect(() => {
     if (offerId) {
@@ -679,6 +708,126 @@ export default function OfferDetailPage() {
     const highlights = [...(marketingForm.marketing_highlights || [])]
     highlights.splice(index, 1)
     setMarketingForm({ ...marketingForm, marketing_highlights: highlights })
+  }
+
+  // Timeline handlers
+  const loadTimeline = async () => {
+    if (!offerId) return
+    setTimelineLoading(true)
+    setTimelineError(null)
+    try {
+      const events = await offersAdminApi.getOfferTimeline(offerId)
+      setTimelineEvents(events)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to load timeline")
+    } finally {
+      setTimelineLoading(false)
+    }
+  }
+
+  const handleOpenTimelineModal = (eventId?: string) => {
+    if (eventId) {
+      const event = timelineEvents.find((e) => e.id === eventId)
+      if (event) {
+        setEditingEventId(eventId)
+        setTimelineForm({
+          title: event.title,
+          description: event.description,
+          occurred_at: event.occurred_at ? new Date(event.occurred_at).toISOString().slice(0, 16) : "",
+          article_id: event.article?.id || null,
+        })
+      }
+    } else {
+      setEditingEventId(null)
+      setTimelineForm({
+        title: "",
+        description: "",
+        occurred_at: "",
+        article_id: null,
+      })
+    }
+    setShowTimelineModal(true)
+  }
+
+  const handleCloseTimelineModal = () => {
+    setShowTimelineModal(false)
+    setEditingEventId(null)
+    setTimelineForm({
+      title: "",
+      description: "",
+      occurred_at: "",
+      article_id: null,
+    })
+  }
+
+  const handleSaveTimelineEvent = async () => {
+    if (!offerId) return
+    if (!timelineForm.title.trim() || !timelineForm.description.trim()) {
+      setTimelineError("Title and description are required")
+      return
+    }
+    setSavingTimeline(true)
+    setTimelineError(null)
+    try {
+      const payload: any = {
+        title: timelineForm.title.trim(),
+        description: timelineForm.description.trim(),
+        article_id: timelineForm.article_id || null,
+      }
+      if (timelineForm.occurred_at) {
+        payload.occurred_at = new Date(timelineForm.occurred_at).toISOString()
+      }
+      if (editingEventId) {
+        await offersAdminApi.updateTimelineEvent(offerId, editingEventId, payload)
+      } else {
+        await offersAdminApi.createTimelineEvent(offerId, payload)
+      }
+      await loadTimeline()
+      handleCloseTimelineModal()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to save timeline event")
+    } finally {
+      setSavingTimeline(false)
+    }
+  }
+
+  const handleDeleteTimelineEvent = async (eventId: string) => {
+    if (!offerId || !confirm("Delete this timeline event?")) return
+    try {
+      await offersAdminApi.deleteTimelineEvent(offerId, eventId)
+      await loadTimeline()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to delete timeline event")
+    }
+  }
+
+  const handleMoveTimelineEvent = async (eventId: string, direction: "up" | "down") => {
+    if (!offerId) return
+    const eventIndex = timelineEvents.findIndex((e) => e.id === eventId)
+    if (eventIndex === -1) return
+    if (direction === "up" && eventIndex === 0) return
+    if (direction === "down" && eventIndex === timelineEvents.length - 1) return
+
+    const newEvents = [...timelineEvents]
+    const targetIndex = direction === "up" ? eventIndex - 1 : eventIndex + 1
+    ;[newEvents[eventIndex], newEvents[targetIndex]] = [newEvents[targetIndex], newEvents[eventIndex]]
+
+    // Update sort orders
+    const items = newEvents.map((e, idx) => ({
+      id: e.id,
+      sort_order: idx,
+    }))
+
+    try {
+      await offersAdminApi.reorderTimelineEvents(offerId, items)
+      await loadTimeline()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to reorder timeline events")
+    }
   }
 
   const formatFileSize = (bytes: number): string => {
@@ -1610,6 +1759,173 @@ export default function OfferDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Project Progress Timeline Section */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Project Progress</h2>
+          <button
+            onClick={() => handleOpenTimelineModal()}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+          >
+            Add Update
+          </button>
+        </div>
+
+        {timelineError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium">{timelineError}</div>
+          </div>
+        )}
+
+        {timelineLoading ? (
+          <div className="text-center py-8 text-gray-500">Loading timeline...</div>
+        ) : timelineEvents.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">No timeline events yet. Click "Add Update" to create one.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Linked Article</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {timelineEvents.map((event, index) => (
+                  <tr key={event.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleMoveTimelineEvent(event.id, "up")}
+                          disabled={index === 0}
+                          className="text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                          title="Move up"
+                        >
+                          ▲
+                        </button>
+                        <span className="font-mono">{event.sort_order}</span>
+                        <button
+                          onClick={() => handleMoveTimelineEvent(event.id, "down")}
+                          disabled={index === timelineEvents.length - 1}
+                          className="text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                          title="Move down"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {event.occurred_at ? new Date(event.occurred_at).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-900">{event.title}</td>
+                    <td className="px-4 py-4 text-sm text-gray-500">
+                      {event.article ? event.article.title : "None"}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleOpenTimelineModal(event.id)}
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTimelineEvent(event.id)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Timeline Modal */}
+      {showTimelineModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-semibold mb-4">
+              {editingEventId ? "Edit Timeline Event" : "Add Timeline Event"}
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+                <input
+                  type="text"
+                  value={timelineForm.title}
+                  onChange={(e) => setTimelineForm({ ...timelineForm, title: e.target.value })}
+                  maxLength={120}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  placeholder="Event title (max 120 chars)"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Description * ({280 - timelineForm.description.length} chars remaining)
+                </label>
+                <textarea
+                  value={timelineForm.description}
+                  onChange={(e) => {
+                    if (e.target.value.length <= 280) {
+                      setTimelineForm({ ...timelineForm, description: e.target.value })
+                    }
+                  }}
+                  maxLength={280}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  placeholder="Event description (max 280 chars)"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date (optional)</label>
+                <input
+                  type="datetime-local"
+                  value={timelineForm.occurred_at}
+                  onChange={(e) => setTimelineForm({ ...timelineForm, occurred_at: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Linked Article (optional)</label>
+                <ArticlePicker
+                  selectedArticleId={timelineForm.article_id}
+                  onSelect={(id) => setTimelineForm({ ...timelineForm, article_id: id })}
+                  onClear={() => setTimelineForm({ ...timelineForm, article_id: null })}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={handleCloseTimelineModal}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveTimelineEvent}
+                disabled={savingTimeline || !timelineForm.title.trim() || !timelineForm.description.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+              >
+                {savingTimeline ? "Saving..." : editingEventId ? "Update" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Investments List */}
       <div className="bg-white border border-gray-200 rounded-lg p-6">

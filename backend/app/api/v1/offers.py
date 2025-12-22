@@ -18,6 +18,10 @@ from app.schemas.offers import (
 )
 from app.auth.dependencies import require_user_role
 from app.auth.oidc import Principal
+from app.core.articles.models import Article, ArticleMedia, ArticleStatus
+from app.schemas.articles import ArticlePublicListItem
+from app.core.offers.models import OfferTimelineEvent
+from app.schemas.offers_timeline import TimelineEventResponse, TimelineEventArticleInfo
 from app.utils.trace_id import get_trace_id
 from app.infrastructure.settings import get_settings
 from app.services.storage.s3_service import get_s3_service
@@ -477,3 +481,152 @@ async def invest_in_offer_endpoint(
                 "message": "An unexpected error occurred"
             }
         )
+
+
+def generate_presigned_url_for_article_media(media: ArticleMedia) -> Optional[str]:
+    """
+    Generate presigned URL for article media.
+    Returns None if storage is not configured or if media.url exists (public CDN).
+    """
+    # If media has a public URL, prefer it
+    if media.url:
+        return media.url
+    
+    # Try to generate presigned URL
+    try:
+        s3_service = get_s3_service()
+        return s3_service.generate_presigned_get_url(key=media.key)
+    except StorageNotConfiguredError:
+        # Storage not configured - return None
+        logger.warning(f"Storage not configured, cannot generate presigned URL for article media {media.id}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to generate presigned URL for article media {media.id}: {str(e)}")
+        return None
+
+
+@router.get(
+    "/offers/{offer_id}/articles",
+    response_model=List[ArticlePublicListItem],
+    summary="Get articles linked to an offer",
+    description="List published articles linked to a specific offer. Public endpoint (no authentication required).",
+)
+async def get_offer_articles(
+    offer_id: UUID,
+    limit: int = Query(default=10, ge=1, le=50, description="Maximum number of results"),
+    offset: int = Query(default=0, ge=0, description="Number of results to skip"),
+    db: Session = Depends(get_db),
+) -> List[ArticlePublicListItem]:
+    """
+    Get published articles linked to an offer.
+    
+    This is a PUBLIC endpoint (no authentication required).
+    Returns only articles with status='published'.
+    """
+    # Verify offer exists
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="OFFER_NOT_FOUND"
+        )
+    
+    # Get articles linked to this offer (only published)
+    articles = db.query(Article).join(Article.offers).filter(
+        Offer.id == offer_id,
+        Article.status == ArticleStatus.PUBLISHED.value
+    ).order_by(Article.published_at.desc().nullslast(), Article.updated_at.desc().nullslast()).limit(limit).offset(offset).all()
+    
+    results = []
+    for article in articles:
+        # Get cover URL
+        cover_url = None
+        if article.cover_media_id:
+            cover_media = db.query(ArticleMedia).filter(ArticleMedia.id == article.cover_media_id).first()
+            if cover_media:
+                cover_url = generate_presigned_url_for_article_media(cover_media)
+        
+        results.append(ArticlePublicListItem(
+            id=str(article.id),
+            slug=article.slug,
+            title=article.title,
+            subtitle=article.subtitle,
+            excerpt=article.excerpt,
+            cover_url=cover_url,
+            author_name=article.author_name,
+            published_at=article.published_at.isoformat() if article.published_at else None,
+            tags=article.tags if article.tags else [],
+            is_featured=article.is_featured,
+        ))
+    
+    return results
+
+
+def build_timeline_event_response_public(event: OfferTimelineEvent, db: Session) -> TimelineEventResponse:
+    """Build timeline event response for public API with article info if linked and published"""
+    article_info = None
+    if event.article_id:
+        article = db.query(Article).filter(Article.id == event.article_id).first()
+        # Only include article if it's published
+        if article and article.status == ArticleStatus.PUBLISHED.value:
+            # Get cover URL if available
+            cover_url = None
+            if article.cover_media_id:
+                cover_media = db.query(ArticleMedia).filter(ArticleMedia.id == article.cover_media_id).first()
+                if cover_media:
+                    cover_url = generate_presigned_url_for_article_media(cover_media)
+            
+            article_info = TimelineEventArticleInfo(
+                id=str(article.id),
+                title=article.title,
+                slug=article.slug,
+                published_at=article.published_at.isoformat() if article.published_at else None,
+                cover_url=cover_url,
+            )
+    
+    return TimelineEventResponse(
+        id=str(event.id),
+        title=event.title,
+        description=event.description,
+        occurred_at=event.occurred_at.isoformat() if event.occurred_at else None,
+        sort_order=event.sort_order,
+        article=article_info,
+        created_at=event.created_at.isoformat(),
+        updated_at=event.updated_at.isoformat() if event.updated_at else None,
+    )
+
+
+@router.get(
+    "/offers/{offer_id}/timeline",
+    response_model=List[TimelineEventResponse],
+    summary="Get timeline events for an offer",
+    description="List all timeline events (project progress) for an offer, sorted by order and date. Public endpoint (no authentication required).",
+)
+async def get_offer_timeline(
+    offer_id: UUID,
+    db: Session = Depends(get_db),
+) -> List[TimelineEventResponse]:
+    """
+    Get timeline events for an offer.
+    
+    This is a PUBLIC endpoint (no authentication required).
+    Returns timeline events sorted by sort_order ASC, then occurred_at ASC.
+    Linked articles are only included if they are published.
+    """
+    # Verify offer exists
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="OFFER_NOT_FOUND"
+        )
+    
+    # Get timeline events sorted by sort_order ASC, then occurred_at ASC
+    events = db.query(OfferTimelineEvent).filter(
+        OfferTimelineEvent.offer_id == offer_id
+    ).order_by(
+        OfferTimelineEvent.sort_order.asc(),
+        OfferTimelineEvent.occurred_at.asc().nullslast()
+    ).all()
+    
+    return [build_timeline_event_response_public(event, db) for event in events]

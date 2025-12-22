@@ -36,11 +36,19 @@ from app.core.offers.models import (
     InvestmentIntent, InvestmentIntentStatus,
     OfferMedia, MediaType, MediaVisibility,
     OfferDocument, DocumentKind, DocumentVisibility,
+    OfferTimelineEvent,
 )
 
 # 8. Article models (depends on Offer via many-to-many)
 from app.core.articles.models import (
     Article, ArticleMedia, ArticleStatus, ArticleMediaType, article_offers,
+)
+
+# 9. Partner models (depends on Offer via many-to-many)
+from app.core.partners.models import (
+    Partner, PartnerStatus, PartnerTeamMember, PartnerMedia, PartnerMediaType,
+    PartnerDocument, PartnerDocumentType, PartnerPortfolioProject,
+    PartnerPortfolioProjectStatus, PartnerPortfolioMedia, partner_offers,
 )
 
 # Export all for convenience
@@ -72,5 +80,17 @@ __all__ = [
     "OfferDocument",
     "DocumentKind",
     "DocumentVisibility",
+    "OfferTimelineEvent",
+    "Partner",
+    "PartnerStatus",
+    "PartnerTeamMember",
+    "PartnerMedia",
+    "PartnerMediaType",
+    "PartnerDocument",
+    "PartnerDocumentType",
+    "PartnerPortfolioProject",
+    "PartnerPortfolioProjectStatus",
+    "PartnerPortfolioMedia",
+    "partner_offers",
 ]
 

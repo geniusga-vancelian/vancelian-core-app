@@ -75,6 +75,14 @@ export function TopBar() {
                 Articles
               </Link>
               <Link
+                href="/partners"
+                className={`text-gray-600 hover:text-gray-900 ${
+                  pathname?.startsWith("/partners") ? "font-semibold text-blue-600" : ""
+                }`}
+              >
+                Partners
+              </Link>
+              <Link
                 href="/compliance"
                 className={`text-gray-600 hover:text-gray-900 ${
                   pathname === "/compliance" ? "font-semibold text-blue-600" : ""

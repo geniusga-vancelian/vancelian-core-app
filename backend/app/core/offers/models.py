@@ -101,6 +101,25 @@ class Offer(BaseModel):
         back_populates="offers",
     )
     
+    # Timeline events (project progress)
+    timeline_events = relationship(
+        "OfferTimelineEvent",
+        foreign_keys="OfferTimelineEvent.offer_id",
+        primaryjoin="Offer.id==OfferTimelineEvent.offer_id",
+        order_by="OfferTimelineEvent.sort_order.asc(), OfferTimelineEvent.occurred_at.asc().nullslast()",
+        cascade="all, delete-orphan",
+        lazy="select",
+        back_populates="offer",
+    )
+    
+    # Many-to-many relationship with partners (via partner_offers)
+    partners = relationship(
+        "Partner",
+        secondary="partner_offers",  # String reference to avoid circular import
+        lazy="select",
+        back_populates="offers",
+    )
+    
     # Backward compatibility alias (deprecated, use offer_media instead)
     @property
     def media(self):
@@ -350,4 +369,46 @@ class OfferDocument(BaseModel):
     # Table-level constraints
     __table_args__ = (
         CheckConstraint('size_bytes > 0', name='check_document_size_positive'),
+    )
+
+
+class OfferTimelineEvent(BaseModel):
+    """
+    OfferTimelineEvent model - Represents a project progress update for an offer
+    
+    Features:
+    - Native to an offer (not an article)
+    - Optional link to an article for enrichment
+    - Sortable by order and date
+    - Short description (max 280 chars for UX)
+    """
+    
+    __tablename__ = "offer_timeline_events"
+    
+    offer_id = Column(UUID(as_uuid=True), ForeignKey("offers.id", name="fk_offer_timeline_events_offer_id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(120), nullable=False)  # Short title
+    description = Column(Text, nullable=False)  # Description (max 280 enforced via validation)
+    occurred_at = Column(DateTime(timezone=True), nullable=True, index=True)  # When the event occurred (optional)
+    article_id = Column(UUID(as_uuid=True), ForeignKey("articles.id", name="fk_offer_timeline_events_article_id", ondelete="SET NULL"), nullable=True, index=True)  # Optional link to article
+    sort_order = Column(Integer, nullable=False, default=0, index=True)  # Order for display
+    
+    # Relationships
+    offer = relationship(
+        "Offer",
+        foreign_keys=[offer_id],
+        primaryjoin="OfferTimelineEvent.offer_id==Offer.id",
+        back_populates="timeline_events",
+    )
+    
+    article = relationship(
+        "Article",
+        foreign_keys=[article_id],
+        primaryjoin="OfferTimelineEvent.article_id==Article.id",
+        lazy="select",
+    )
+    
+    # Table-level constraints
+    __table_args__ = (
+        Index('idx_offer_timeline_offer_order', 'offer_id', 'sort_order'),
+        CheckConstraint('sort_order >= 0', name='check_timeline_sort_order_non_negative'),
     )

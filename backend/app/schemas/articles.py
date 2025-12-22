@@ -84,6 +84,11 @@ class ArticleLinkOffersRequest(BaseModel):
     offer_ids: List[str] = Field(..., description="List of offer IDs (replaces existing links)")
 
 
+class ArticleLinkOfferRequest(BaseModel):
+    """Request schema for linking/unlinking a single offer to/from an article"""
+    offer_id: Optional[str] = Field(None, description="Offer ID to link (null to unlink)")
+
+
 class ArticlePresignUploadRequest(BaseModel):
     """Request for presigned upload URL for article media"""
     upload_type: str = Field(..., description="Upload type: 'image', 'video', or 'document'")

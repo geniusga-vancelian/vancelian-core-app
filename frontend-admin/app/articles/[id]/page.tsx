@@ -42,8 +42,10 @@ export default function ArticleDetailPage() {
 
   // Offers linking state
   const [availableOffers, setAvailableOffers] = useState<Offer[]>([])
-  const [selectedOfferIds, setSelectedOfferIds] = useState<string[]>([])
-  const [savingOffers, setSavingOffers] = useState(false)
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null)
+  const [offerSearchQuery, setOfferSearchQuery] = useState<string>("")
+  const [loadingOffers, setLoadingOffers] = useState(false)
+  const [savingOffer, setSavingOffer] = useState(false)
 
   // Storage status
   const [storageEnabled, setStorageEnabled] = useState<boolean | null>(null)
@@ -90,7 +92,8 @@ export default function ArticleDetailPage() {
         is_featured: data.is_featured,
         status: data.status as any,
       })
-      setSelectedOfferIds(data.offer_ids || [])
+      // Set single selected offer (take first if multiple exist)
+      setSelectedOfferId(data.offer_ids && data.offer_ids.length > 0 ? data.offer_ids[0] : null)
     } catch (err: any) {
       const apiError = parseApiError(err)
       setError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to load article")
@@ -118,11 +121,16 @@ export default function ArticleDetailPage() {
   }
 
   const loadAvailableOffers = async () => {
+    setLoadingOffers(true)
     try {
-      const offers = await offersAdminApi.listOffers({ limit: 200 })
+      // Backend limit is 100, so fetch in batches if needed
+      const offers = await offersAdminApi.listOffers({ limit: 100 })
       setAvailableOffers(offers)
     } catch (err) {
       console.error('Failed to load offers:', err)
+      setError('Failed to load offers list')
+    } finally {
+      setLoadingOffers(false)
     }
   }
 
@@ -246,20 +254,25 @@ export default function ArticleDetailPage() {
     }
   }
 
-  const handleSaveOffers = async () => {
+  const handleSaveOffer = async () => {
     if (!articleId) return
-    setSavingOffers(true)
+    setSavingOffer(true)
     setError(null)
 
     try {
-      await articlesAdminApi.linkArticleOffers(articleId, selectedOfferIds)
+      await articlesAdminApi.linkArticleOffer(articleId, selectedOfferId)
       await loadArticle()
     } catch (err: any) {
       const apiError = parseApiError(err)
-      setError(apiError.message || "Failed to link offers")
+      setError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to link offer")
+      setTraceId(apiError.trace_id || null)
     } finally {
-      setSavingOffers(false)
+      setSavingOffer(false)
     }
+  }
+
+  const handleClearOffer = () => {
+    setSelectedOfferId(null)
   }
 
   const getStatusBadge = (status: string) => {
@@ -822,55 +835,121 @@ export default function ArticleDetailPage() {
         )}
       </div>
 
-      {/* Link to Offers */}
+      {/* Linked Offer (Single) */}
       <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-        <h2 className="text-xl font-semibold mb-4">Linked Offers</h2>
+        <h2 className="text-xl font-semibold mb-4">Linked Offer</h2>
+        
+        {/* Selected Offer Display */}
+        {selectedOfferId && (() => {
+          const selectedOffer = availableOffers.find(o => o.id === selectedOfferId)
+          return selectedOffer ? (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-blue-900">Selected:</p>
+                  <p className="text-sm text-blue-700 font-semibold">{selectedOffer.name}</p>
+                  <p className="text-xs text-blue-600">{selectedOffer.code} • {selectedOffer.currency} • {selectedOffer.status}</p>
+                </div>
+              </div>
+            </div>
+          ) : null
+        })()}
+
+        {/* Search Input */}
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 mb-2">
-            Select offers to link to this article (multi-select)
+            Search offer by name or code
           </label>
-          <select
-            multiple
-            value={selectedOfferIds}
-            onChange={(e) => {
-              const selected = Array.from(e.target.selectedOptions, opt => opt.value)
-              setSelectedOfferIds(selected)
-            }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md min-h-[200px]"
-            size={10}
-          >
-            {availableOffers.map((offer) => (
-              <option key={offer.id} value={offer.id}>
-                {offer.code} - {offer.name}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-gray-500 mt-1">
-            Hold Ctrl (Cmd on Mac) to select multiple offers
-          </p>
+          <input
+            type="text"
+            value={offerSearchQuery}
+            onChange={(e) => setOfferSearchQuery(e.target.value)}
+            placeholder="Search offer by name / code..."
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
         </div>
-        <button
-          onClick={handleSaveOffers}
-          disabled={savingOffers}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
-        >
-          {savingOffers ? "Saving..." : "Save Links"}
-        </button>
-        {article.offer_ids.length > 0 && (
-          <div className="mt-4">
-            <p className="text-sm text-gray-700 mb-2">Currently linked offers:</p>
-            <ul className="list-disc list-inside text-sm text-gray-600">
-              {article.offer_ids.map(offerId => {
-                const offer = availableOffers.find(o => o.id === offerId)
-                return offer ? (
-                  <li key={offerId}>{offer.code} - {offer.name}</li>
-                ) : (
-                  <li key={offerId}>{offerId}</li>
+
+        {/* Offers List */}
+        <div className="mb-4">
+          {loadingOffers ? (
+            <div className="text-center py-8 text-gray-500">Loading offers...</div>
+          ) : (
+            <div className="border border-gray-300 rounded-md overflow-hidden" style={{ maxHeight: '320px', overflowY: 'auto' }}>
+              {(() => {
+                const filteredOffers = availableOffers.filter(offer => {
+                  const query = offerSearchQuery.toLowerCase()
+                  return (
+                    offer.name.toLowerCase().includes(query) ||
+                    offer.code.toLowerCase().includes(query) ||
+                    offer.currency.toLowerCase().includes(query)
+                  )
+                })
+
+                if (filteredOffers.length === 0) {
+                  return (
+                    <div className="p-4 text-center text-gray-500 text-sm">
+                      No offers found{offerSearchQuery ? ` matching "${offerSearchQuery}"` : ''}
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="divide-y divide-gray-200">
+                    {filteredOffers.map((offer) => {
+                      const isSelected = selectedOfferId === offer.id
+                      return (
+                        <div
+                          key={offer.id}
+                          onClick={() => setSelectedOfferId(offer.id)}
+                          className={`p-4 cursor-pointer hover:bg-gray-50 transition-colors ${
+                            isSelected ? 'bg-blue-50 border-l-4 border-l-blue-600' : ''
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold text-gray-900">{offer.name}</p>
+                              <p className="text-xs text-gray-600 mt-1">
+                                {offer.code} • {offer.currency} • {offer.status}
+                              </p>
+                            </div>
+                            <div className="ml-4">
+                              <input
+                                type="radio"
+                                checked={isSelected}
+                                onChange={() => setSelectedOfferId(offer.id)}
+                                className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 )
-              })}
-            </ul>
-          </div>
-        )}
+              })()}
+            </div>
+          )}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-3">
+          <button
+            onClick={handleSaveOffer}
+            disabled={savingOffer}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
+          >
+            {savingOffer ? "Saving..." : "Save Link"}
+          </button>
+          {selectedOfferId && (
+            <button
+              onClick={handleClearOffer}
+              disabled={savingOffer}
+              className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 disabled:opacity-50 text-sm font-medium"
+            >
+              Clear Selection
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content Preview */}

@@ -106,33 +106,40 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
       errorData.message = response.statusText || errorData.message
     }
     
+    // Extract error info from nested error object (FastAPI format)
+    const errorObj = errorData.error || errorData
+    const errorMessage = errorObj.message || errorData.detail || errorObj.detail || `API request failed for ${endpoint}`
+    const errorCode = errorObj.code || errorData.code
+    const traceId = errorObj.trace_id || errorData.trace_id
+    
     // Enhanced logging for 422 validation errors
-    if (response.status === 422 && errorData.detail) {
+    if (response.status === 422 && (errorData.detail || errorObj.details)) {
+      const details = errorData.detail || errorObj.details
       console.error('[ADMIN API] Validation Error (422):', {
         endpoint,
         url,
         status: response.status,
-        detail: errorData.detail,
+        detail: details,
         // If detail is an array (Pydantic validation errors), format it nicely
-        validationErrors: Array.isArray(errorData.detail)
-          ? errorData.detail.map((err: any) => ({
+        validationErrors: Array.isArray(details)
+          ? details.map((err: any) => ({
               field: err.loc?.join('.') || 'unknown',
               message: err.msg || err.message || 'Validation error',
               type: err.type || 'unknown',
             }))
-          : errorData.detail,
+          : details,
       })
     }
     
     throw {
-      message: errorData.message || errorData.detail || `API request failed for ${endpoint}`,
-      code: errorData.code,
+      message: errorMessage,
+      code: errorCode,
       status: response.status,
-      trace_id: errorData.trace_id,
+      trace_id: traceId,
       endpoint: endpoint,
-      detail: errorData.detail, // Include full detail for validation errors
-      validationErrors: Array.isArray(errorData.detail)
-        ? errorData.detail.map((err: any) => ({
+      detail: errorData.detail || errorObj.details || errorObj.detail, // Include full detail for validation errors
+      validationErrors: Array.isArray(errorData.detail || errorObj.details)
+        ? (errorData.detail || errorObj.details).map((err: any) => ({
             field: err.loc?.join('.') || 'unknown',
             message: err.msg || err.message || 'Validation error',
             type: err.type || 'unknown',
@@ -471,6 +478,65 @@ export const offersAdminApi = {
     })
   },
 
+  // Timeline endpoints
+  getOfferTimeline: async (offerId: string): Promise<Array<{
+    id: string
+    title: string
+    description: string
+    occurred_at: string | null
+    sort_order: number
+    article: {
+      id: string
+      title: string
+      slug: string
+      published_at: string | null
+      cover_url: string | null
+    } | null
+    created_at: string
+    updated_at: string | null
+  }>> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline`)
+  },
+
+  createTimelineEvent: async (offerId: string, payload: {
+    title: string
+    description: string
+    occurred_at?: string | null
+    article_id?: string | null
+    sort_order?: number
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updateTimelineEvent: async (offerId: string, eventId: string, payload: {
+    title?: string
+    description?: string
+    occurred_at?: string | null
+    article_id?: string | null
+    sort_order?: number
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deleteTimelineEvent: async (offerId: string, eventId: string): Promise<void> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline/${eventId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  reorderTimelineEvents: async (offerId: string, items: Array<{ id: string; sort_order: number }>): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    })
+  },
+
   setCoverMedia: async (offerId: string, mediaId: string): Promise<Offer> => {
     return apiRequest(`admin/v1/offers/${offerId}/media/${mediaId}/set-cover`, {
       method: 'POST',
@@ -618,6 +684,13 @@ export const articlesAdminApi = {
     })
   },
 
+  linkArticleOffer: async (articleId: string, offerId: string | null): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/offer`, {
+      method: 'PUT',
+      body: JSON.stringify({ offer_id: offerId }),
+    })
+  },
+
   // Media endpoints
   presignArticleUpload: async (articleId: string, payload: {
     upload_type: 'image' | 'video' | 'document'
@@ -677,6 +750,330 @@ export const articlesAdminApi = {
   setArticlePromoVideo: async (articleId: string, mediaId: string): Promise<any> => {
     return apiRequest(`admin/v1/articles/${articleId}/media/${mediaId}/set-promo-video`, {
       method: 'POST',
+    })
+  },
+}
+
+/**
+ * Partners Admin API
+ */
+export type Partner = {
+  id: string
+  code: string
+  legal_name: string
+  trade_name?: string
+  description_markdown?: string
+  website_url?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  country?: string
+  contact_email?: string
+  contact_phone?: string
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  ceo_name?: string
+  ceo_title?: string
+  ceo_quote?: string
+  ceo_bio_markdown?: string
+  ceo_photo_media_id?: string
+  ceo_photo_url?: string
+  team_members: Array<{
+    id: string
+    full_name: string
+    role_title?: string
+    bio_markdown?: string
+    linkedin_url?: string
+    website_url?: string
+    photo_media_id?: string
+    photo_url?: string
+    sort_order: number
+    created_at: string
+    updated_at?: string
+  }>
+  portfolio_projects: Array<{
+    id: string
+    title: string
+    category?: string
+    location?: string
+    start_date?: string
+    end_date?: string
+    short_summary?: string
+    description_markdown?: string
+    results_kpis?: string[]
+    status: string
+    cover_media_id?: string
+    cover_url?: string
+    promo_video_media_id?: string
+    promo_video_url?: string
+    gallery: Array<{
+      id: string
+      type: string
+      key: string
+      url?: string
+      mime_type: string
+      size_bytes: number
+      width?: number
+      height?: number
+      duration_seconds?: number
+      created_at: string
+    }>
+    created_at: string
+    updated_at?: string
+  }>
+  media: Array<{
+    id: string
+    type: 'IMAGE' | 'VIDEO'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    width?: number
+    height?: number
+    duration_seconds?: number
+    created_at: string
+  }>
+  documents: Array<{
+    id: string
+    title: string
+    type: 'PDF' | 'DOC' | 'OTHER'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    created_at: string
+  }>
+  linked_offers: Array<{
+    id: string
+    code: string
+    name: string
+    status: string
+    is_primary: boolean
+  }>
+  created_at: string
+  updated_at?: string
+}
+
+export type PartnerListItem = {
+  id: string
+  code: string
+  legal_name: string
+  trade_name?: string
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  website_url?: string
+  updated_at?: string
+}
+
+export type CreatePartnerPayload = {
+  code: string
+  legal_name: string
+  trade_name?: string
+  description_markdown?: string
+  website_url?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  country?: string
+  contact_email?: string
+  contact_phone?: string
+  ceo_name?: string
+  ceo_title?: string
+  ceo_quote?: string
+  ceo_bio_markdown?: string
+}
+
+export type UpdatePartnerPayload = {
+  code?: string
+  legal_name?: string
+  trade_name?: string
+  description_markdown?: string
+  website_url?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  country?: string
+  contact_email?: string
+  contact_phone?: string
+  status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  ceo_name?: string
+  ceo_title?: string
+  ceo_quote?: string
+  ceo_bio_markdown?: string
+  ceo_photo_media_id?: string | null
+}
+
+export type TeamMemberPayload = {
+  id?: string
+  full_name: string
+  role_title?: string
+  bio_markdown?: string
+  linkedin_url?: string
+  website_url?: string
+  photo_media_id?: string | null
+  sort_order?: number
+}
+
+export type LinkPartnerOffersPayload = {
+  primary_offer_id?: string | null
+  offer_ids?: string[]
+}
+
+export type PortfolioProjectPayload = {
+  title: string
+  category?: string
+  location?: string
+  start_date?: string
+  end_date?: string
+  short_summary?: string
+  description_markdown?: string
+  results_kpis?: string[]
+  status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+}
+
+export const partnersAdminApi = {
+  listPartners: async (params?: {
+    status?: string
+    q?: string
+    limit?: number
+    offset?: number
+  }): Promise<PartnerListItem[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.q) queryParams.append('q', params.q)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest<PartnerListItem[]>(`admin/v1/partners${query ? `?${query}` : ''}`)
+  },
+
+  getPartner: async (partnerId: string): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}`)
+  },
+
+  createPartner: async (payload: CreatePartnerPayload): Promise<Partner> => {
+    return apiRequest<Partner>('admin/v1/partners', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updatePartner: async (partnerId: string, payload: UpdatePartnerPayload): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  publishPartner: async (partnerId: string): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/publish`, {
+      method: 'POST',
+    })
+  },
+
+  archivePartner: async (partnerId: string): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/archive`, {
+      method: 'POST',
+    })
+  },
+
+  linkPartnerOffers: async (partnerId: string, payload: LinkPartnerOffersPayload): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/offers`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updateTeamMembers: async (partnerId: string, members: TeamMemberPayload[]): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/team`, {
+      method: 'PUT',
+      body: JSON.stringify({ members }),
+    })
+  },
+
+  // Portfolio projects
+  createPortfolioProject: async (partnerId: string, payload: PortfolioProjectPayload): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/portfolio`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updatePortfolioProject: async (partnerId: string, projectId: string, payload: Partial<PortfolioProjectPayload>): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/portfolio/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deletePortfolioProject: async (partnerId: string, projectId: string): Promise<void> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/portfolio/${projectId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // Media & Documents
+  presignPartnerUpload: async (
+    partnerId: string,
+    uploadType: 'media' | 'document',
+    fileName: string,
+    mimeType: string,
+    sizeBytes: number,
+    mediaType?: 'IMAGE' | 'VIDEO'
+  ): Promise<{ upload_url: string; key: string; required_headers: any; expires_in: number }> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/uploads/presign`, {
+      method: 'POST',
+      body: JSON.stringify({
+        upload_type: uploadType,
+        file_name: fileName,
+        mime_type: mimeType,
+        size_bytes: sizeBytes,
+        ...(mediaType && { media_type: mediaType }),
+      }),
+    })
+  },
+
+  createPartnerMedia: async (
+    partnerId: string,
+    payload: {
+      key: string
+      mime_type: string
+      size_bytes: number
+      media_type: 'IMAGE' | 'VIDEO'
+      width?: number
+      height?: number
+      duration_seconds?: number
+    }
+  ): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/media`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deletePartnerMedia: async (partnerId: string, mediaId: string): Promise<void> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/media/${mediaId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  createPartnerDocument: async (
+    partnerId: string,
+    payload: {
+      title: string
+      key: string
+      mime_type: string
+      size_bytes: number
+      document_type: 'PDF' | 'DOC' | 'OTHER'
+    }
+  ): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/documents`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deletePartnerDocument: async (partnerId: string, docId: string): Promise<void> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/documents/${docId}`, {
+      method: 'DELETE',
     })
   },
 }
