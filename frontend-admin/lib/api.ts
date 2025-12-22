@@ -3,18 +3,12 @@
  */
 
 // Get API base URL - must be absolute for browser requests
+// Import centralized config
+import { getApiBaseUrl as getConfigApiBaseUrl } from './config'
+
 export const getApiBaseUrl = (): string => {
-  if (typeof window === 'undefined') {
-    return process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
-  }
-  
-  const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'
-  
-  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
-    return `http://${baseUrl}`
-  }
-  
-  return baseUrl
+  // Use centralized config (which handles fallbacks properly)
+  return getConfigApiBaseUrl()
 }
 
 /**
@@ -90,18 +84,67 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
 
   if (!response.ok) {
     let errorData: any = { message: `API request failed for ${endpoint}` }
+    const contentType = response.headers.get('content-type') || ''
+    
     try {
-      errorData = await response.json()
+      if (contentType.includes('application/json')) {
+        errorData = await response.json()
+      } else {
+        // Try to read as text for non-JSON responses
+        const text = await response.text()
+        if (text) {
+          try {
+            errorData = JSON.parse(text)
+          } catch {
+            errorData.message = text || response.statusText || errorData.message
+          }
+        } else {
+          errorData.message = response.statusText || errorData.message
+        }
+      }
     } catch (e) {
       errorData.message = response.statusText || errorData.message
     }
     
+    // Extract error info from nested error object (FastAPI format)
+    const errorObj = errorData.error || errorData
+    const errorMessage = errorObj.message || errorData.detail || errorObj.detail || `API request failed for ${endpoint}`
+    const errorCode = errorObj.code || errorData.code
+    const traceId = errorObj.trace_id || errorData.trace_id
+    
+    // Enhanced logging for 422 validation errors
+    if (response.status === 422 && (errorData.detail || errorObj.details)) {
+      const details = errorData.detail || errorObj.details
+      console.error('[ADMIN API] Validation Error (422):', {
+        endpoint,
+        url,
+        status: response.status,
+        detail: details,
+        // If detail is an array (Pydantic validation errors), format it nicely
+        validationErrors: Array.isArray(details)
+          ? details.map((err: any) => ({
+              field: err.loc?.join('.') || 'unknown',
+              message: err.msg || err.message || 'Validation error',
+              type: err.type || 'unknown',
+            }))
+          : details,
+      })
+    }
+    
     throw {
-      message: errorData.message || errorData.detail || `API request failed for ${endpoint}`,
-      code: errorData.code,
+      message: errorMessage,
+      code: errorCode,
       status: response.status,
-      trace_id: errorData.trace_id,
+      trace_id: traceId,
       endpoint: endpoint,
+      detail: errorData.detail || errorObj.details || errorObj.detail, // Include full detail for validation errors
+      validationErrors: Array.isArray(errorData.detail || errorObj.details)
+        ? (errorData.detail || errorObj.details).map((err: any) => ({
+            field: err.loc?.join('.') || 'unknown',
+            message: err.msg || err.message || 'Validation error',
+            type: err.type || 'unknown',
+          }))
+        : undefined,
     }
   }
 
@@ -111,7 +154,14 @@ export async function apiRequest<T>(endpoint: string, options?: RequestInit): Pr
 /**
  * Parses an API error object for consistent display
  */
-export function parseApiError(err: any): { message: string; code?: string; status?: number; trace_id?: string; endpoint?: string } {
+export function parseApiError(err: any): { 
+  message: string
+  code?: string
+  status?: number
+  trace_id?: string
+  endpoint?: string
+  validationErrors?: Array<{ field: string; message: string; type: string }>
+} {
   if (typeof err === 'object' && err !== null) {
     return {
       message: err.message || "An unknown error occurred",
@@ -119,9 +169,75 @@ export function parseApiError(err: any): { message: string; code?: string; statu
       status: err.status,
       trace_id: err.trace_id,
       endpoint: err.endpoint,
+      validationErrors: err.validationErrors,
     }
   }
   return { message: String(err) }
+}
+
+/**
+ * Types
+ */
+export type Offer = {
+  id: string
+  code: string
+  name: string
+  description?: string
+  currency: string
+  max_amount: string
+  committed_amount: string
+  remaining_amount: string
+  maturity_date?: string
+  status: 'DRAFT' | 'LIVE' | 'PAUSED' | 'CLOSED'
+  metadata?: Record<string, any>
+  created_at: string
+  updated_at?: string
+  // Marketing V1.1
+  cover_media_id?: string
+  promo_video_media_id?: string
+  cover_url?: string
+  location_label?: string
+  location_lat?: string
+  location_lng?: string
+  marketing_title?: string
+  marketing_subtitle?: string
+  marketing_why?: Array<{ title: string; body: string }>
+  marketing_highlights?: string[]
+  marketing_breakdown?: { purchase_cost?: number; transaction_cost?: number; running_cost?: number }
+  marketing_metrics?: { gross_yield?: number; net_yield?: number; annualised_return?: number; investors_count?: number; days_left?: number }
+  fill_percentage?: number
+}
+
+export type CreateOfferPayload = {
+  code: string
+  name: string
+  description?: string
+  currency?: string
+  max_amount: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+}
+
+export type UpdateOfferPayload = {
+  name?: string
+  description?: string
+  max_amount?: string
+  maturity_date?: string
+  metadata?: Record<string, any>
+}
+
+export type UpdateMarketingPayload = {
+  cover_media_id?: string
+  promo_video_media_id?: string
+  location_label?: string
+  location_lat?: number  // Normalized: number, not string
+  location_lng?: number  // Normalized: number, not string
+  marketing_title?: string
+  marketing_subtitle?: string
+  marketing_why?: Array<{ title: string; body: string }>
+  marketing_highlights?: string[]
+  marketing_breakdown?: { purchase_cost?: number; transaction_cost?: number; running_cost?: number }
+  marketing_metrics?: { gross_yield?: number; net_yield?: number; annualised_return?: number; investors_count?: number; days_left?: number }
 }
 
 /**
@@ -179,6 +295,795 @@ export const adminApi = {
       method: 'POST',
       body: JSON.stringify({ email }),
     })
+  },
+}
+
+/**
+ * Offers Admin API
+ */
+export const offersAdminApi = {
+  listOffers: async (params?: { status?: string; currency?: string; limit?: number; offset?: number }): Promise<Offer[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.currency) queryParams.append('currency', params.currency)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest<Offer[]>(`admin/v1/offers${query ? `?${query}` : ''}`)
+  },
+
+  getOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}`)
+  },
+
+  createOffer: async (payload: CreateOfferPayload): Promise<Offer> => {
+    return apiRequest<Offer>('admin/v1/offers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updateOffer: async (offerId: string, payload: UpdateOfferPayload): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  publishOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}/publish`, {
+      method: 'POST',
+    })
+  },
+
+  pauseOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}/pause`, {
+      method: 'POST',
+    })
+  },
+
+  closeOffer: async (offerId: string): Promise<Offer> => {
+    return apiRequest<Offer>(`admin/v1/offers/${offerId}/close`, {
+      method: 'POST',
+    })
+  },
+
+  listOfferInvestments: async (offerId: string, params?: { status?: string; limit?: number; offset?: number }): Promise<{
+    items: Array<{
+      id: string
+      user_email: string
+      requested_amount: string
+      allocated_amount: string
+      status: string
+      created_at: string
+      idempotency_key?: string
+    }>
+    total: number
+    limit: number
+    offset: number
+  }> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest(`admin/v1/offers/${offerId}/investments${query ? `?${query}` : ''}`)
+  },
+
+  // Media endpoints
+  presignUpload: async (offerId: string, payload: {
+    upload_type: 'media' | 'document'
+    file_name: string
+    mime_type: string
+    size_bytes: number
+    media_type?: 'IMAGE' | 'VIDEO'
+    document_kind?: string
+  }): Promise<{ upload_url: string; key: string; required_headers: Record<string, string>; expires_in: number }> => {
+    return apiRequest(`admin/v1/offers/${offerId}/uploads/presign`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  createOfferMedia: async (offerId: string, payload: {
+    key: string
+    mime_type: string
+    size_bytes: number
+    type: 'IMAGE' | 'VIDEO'
+    sort_order?: number
+    is_cover?: boolean
+    visibility?: 'PUBLIC' | 'PRIVATE'
+    url?: string
+    width?: number
+    height?: number
+    duration_seconds?: number
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  listOfferMedia: async (offerId: string): Promise<Array<{
+    id: string
+    type: 'IMAGE' | 'VIDEO'
+    url?: string
+    mime_type: string
+    size_bytes: number
+    sort_order: number
+    is_cover: boolean
+    created_at: string
+  }>> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media`)
+  },
+
+  reorderOfferMedia: async (offerId: string, items: Array<{ id: string; sort_order: number; is_cover?: boolean }>): Promise<void> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/reorder`, {
+      method: 'PATCH',
+      body: JSON.stringify({ items }),
+    })
+  },
+
+  deleteOfferMedia: async (offerId: string, mediaId: string): Promise<void> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/${mediaId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // Documents endpoints
+  createOfferDocument: async (offerId: string, payload: {
+    name: string
+    kind: string
+    key: string
+    mime_type: string
+    size_bytes: number
+    visibility?: 'PUBLIC' | 'PRIVATE'
+    url?: string
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/documents`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  listOfferDocuments: async (offerId: string): Promise<Array<{
+    id: string
+    name: string
+    kind: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    created_at: string
+  }>> => {
+    return apiRequest(`admin/v1/offers/${offerId}/documents`)
+  },
+
+  deleteOfferDocument: async (offerId: string, docId: string): Promise<void> => {
+    return apiRequest(`admin/v1/offers/${offerId}/documents/${docId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // Marketing V1.1 endpoints
+  updateOfferMarketing: async (offerId: string, payload: UpdateMarketingPayload): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/marketing`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  seedOfferMarketingDefaults: async (offerId: string): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/marketing/seed-defaults`, {
+      method: 'POST',
+    })
+  },
+
+  // Timeline endpoints
+  getOfferTimeline: async (offerId: string): Promise<Array<{
+    id: string
+    title: string
+    description: string
+    occurred_at: string | null
+    sort_order: number
+    article: {
+      id: string
+      title: string
+      slug: string
+      published_at: string | null
+      cover_url: string | null
+    } | null
+    created_at: string
+    updated_at: string | null
+  }>> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline`)
+  },
+
+  createTimelineEvent: async (offerId: string, payload: {
+    title: string
+    description: string
+    occurred_at?: string | null
+    article_id?: string | null
+    sort_order?: number
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updateTimelineEvent: async (offerId: string, eventId: string, payload: {
+    title?: string
+    description?: string
+    occurred_at?: string | null
+    article_id?: string | null
+    sort_order?: number
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline/${eventId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deleteTimelineEvent: async (offerId: string, eventId: string): Promise<void> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline/${eventId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  reorderTimelineEvents: async (offerId: string, items: Array<{ id: string; sort_order: number }>): Promise<any> => {
+    return apiRequest(`admin/v1/offers/${offerId}/timeline/reorder`, {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    })
+  },
+
+  setCoverMedia: async (offerId: string, mediaId: string): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/${mediaId}/set-cover`, {
+      method: 'POST',
+    })
+  },
+
+  setPromoVideo: async (offerId: string, mediaId: string): Promise<Offer> => {
+    return apiRequest(`admin/v1/offers/${offerId}/media/${mediaId}/set-promo-video`, {
+      method: 'POST',
+    })
+  },
+}
+
+/**
+ * Articles Admin API
+ */
+export type Article = {
+  id: string
+  slug: string
+  status: 'draft' | 'published' | 'archived'
+  title: string
+  subtitle?: string
+  excerpt?: string
+  content_markdown?: string
+  content_html?: string
+  cover_media_id?: string
+  promo_video_media_id?: string
+  author_name?: string
+  published_at?: string
+  created_at: string
+  updated_at?: string
+  seo_title?: string
+  seo_description?: string
+  tags: string[]
+  is_featured: boolean
+  allow_comments: boolean
+  media: Array<{
+    id: string
+    type: 'image' | 'video' | 'document'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    width?: number
+    height?: number
+    duration_seconds?: number
+    created_at: string
+  }>
+  offer_ids: string[]
+}
+
+export type ArticleListItem = {
+  id: string
+  slug: string
+  title: string
+  status: 'draft' | 'published' | 'archived'
+  published_at?: string
+  created_at: string
+  updated_at?: string
+  is_featured: boolean
+}
+
+export type CreateArticlePayload = {
+  slug: string
+  title: string
+  subtitle?: string
+  excerpt?: string
+  content_markdown?: string
+  author_name?: string
+  seo_title?: string
+  seo_description?: string
+  tags?: string[]
+  is_featured?: boolean
+}
+
+export type UpdateArticlePayload = {
+  slug?: string
+  title?: string
+  subtitle?: string
+  excerpt?: string
+  content_markdown?: string
+  content_html?: string
+  author_name?: string
+  seo_title?: string
+  seo_description?: string
+  tags?: string[]
+  is_featured?: boolean
+  status?: 'draft' | 'published' | 'archived'
+}
+
+export const articlesAdminApi = {
+  listArticles: async (params?: {
+    status?: string
+    featured?: boolean
+    offer_id?: string
+    search?: string
+    limit?: number
+    offset?: number
+  }): Promise<ArticleListItem[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.featured !== undefined) queryParams.append('featured', String(params.featured))
+    if (params?.offer_id) queryParams.append('offer_id', params.offer_id)
+    if (params?.search) queryParams.append('search', params.search)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest<ArticleListItem[]>(`admin/v1/articles${query ? `?${query}` : ''}`)
+  },
+
+  getArticle: async (articleId: string): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}`)
+  },
+
+  createArticle: async (payload: CreateArticlePayload): Promise<Article> => {
+    return apiRequest<Article>('admin/v1/articles', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updateArticle: async (articleId: string, payload: UpdateArticlePayload): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  publishArticle: async (articleId: string): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/publish`, {
+      method: 'POST',
+    })
+  },
+
+  archiveArticle: async (articleId: string): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/archive`, {
+      method: 'POST',
+    })
+  },
+
+  linkArticleOffers: async (articleId: string, offerIds: string[]): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/offers`, {
+      method: 'PUT',
+      body: JSON.stringify({ offer_ids: offerIds }),
+    })
+  },
+
+  linkArticleOffer: async (articleId: string, offerId: string | null): Promise<Article> => {
+    return apiRequest<Article>(`admin/v1/articles/${articleId}/offer`, {
+      method: 'PUT',
+      body: JSON.stringify({ offer_id: offerId }),
+    })
+  },
+
+  // Media endpoints
+  presignArticleUpload: async (articleId: string, payload: {
+    upload_type: 'image' | 'video' | 'document'
+    file_name: string
+    mime_type: string
+    size_bytes: number
+  }): Promise<{ upload_url: string; key: string; required_headers: Record<string, string>; expires_in: number }> => {
+    return apiRequest(`admin/v1/articles/${articleId}/uploads/presign`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  createArticleMedia: async (articleId: string, payload: {
+    key: string
+    mime_type: string
+    size_bytes: number
+    type: 'image' | 'video' | 'document'
+    url?: string
+    width?: number
+    height?: number
+    duration_seconds?: number
+  }): Promise<any> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  listArticleMedia: async (articleId: string): Promise<Array<{
+    id: string
+    type: 'image' | 'video' | 'document'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    width?: number
+    height?: number
+    duration_seconds?: number
+    created_at: string
+  }>> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media`)
+  },
+
+  deleteArticleMedia: async (articleId: string, mediaId: string): Promise<void> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media/${mediaId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  setArticleCover: async (articleId: string, mediaId: string): Promise<any> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media/${mediaId}/set-cover`, {
+      method: 'POST',
+    })
+  },
+
+  setArticlePromoVideo: async (articleId: string, mediaId: string): Promise<any> => {
+    return apiRequest(`admin/v1/articles/${articleId}/media/${mediaId}/set-promo-video`, {
+      method: 'POST',
+    })
+  },
+}
+
+/**
+ * Partners Admin API
+ */
+export type Partner = {
+  id: string
+  code: string
+  legal_name: string
+  trade_name?: string
+  description_markdown?: string
+  website_url?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  country?: string
+  contact_email?: string
+  contact_phone?: string
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  ceo_name?: string
+  ceo_title?: string
+  ceo_quote?: string
+  ceo_bio_markdown?: string
+  ceo_photo_media_id?: string
+  ceo_photo_url?: string
+  team_members: Array<{
+    id: string
+    full_name: string
+    role_title?: string
+    bio_markdown?: string
+    linkedin_url?: string
+    website_url?: string
+    photo_media_id?: string
+    photo_url?: string
+    sort_order: number
+    created_at: string
+    updated_at?: string
+  }>
+  portfolio_projects: Array<{
+    id: string
+    title: string
+    category?: string
+    location?: string
+    start_date?: string
+    end_date?: string
+    short_summary?: string
+    description_markdown?: string
+    results_kpis?: string[]
+    status: string
+    cover_media_id?: string
+    cover_url?: string
+    promo_video_media_id?: string
+    promo_video_url?: string
+    gallery: Array<{
+      id: string
+      type: string
+      key: string
+      url?: string
+      mime_type: string
+      size_bytes: number
+      width?: number
+      height?: number
+      duration_seconds?: number
+      created_at: string
+    }>
+    created_at: string
+    updated_at?: string
+  }>
+  media: Array<{
+    id: string
+    type: 'IMAGE' | 'VIDEO'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    width?: number
+    height?: number
+    duration_seconds?: number
+    created_at: string
+  }>
+  documents: Array<{
+    id: string
+    title: string
+    type: 'PDF' | 'DOC' | 'OTHER'
+    key: string
+    url?: string
+    mime_type: string
+    size_bytes: number
+    created_at: string
+  }>
+  linked_offers: Array<{
+    id: string
+    code: string
+    name: string
+    status: string
+    is_primary: boolean
+  }>
+  created_at: string
+  updated_at?: string
+}
+
+export type PartnerListItem = {
+  id: string
+  code: string
+  legal_name: string
+  trade_name?: string
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  website_url?: string
+  updated_at?: string
+}
+
+export type CreatePartnerPayload = {
+  code: string
+  legal_name: string
+  trade_name?: string
+  description_markdown?: string
+  website_url?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  country?: string
+  contact_email?: string
+  contact_phone?: string
+  ceo_name?: string
+  ceo_title?: string
+  ceo_quote?: string
+  ceo_bio_markdown?: string
+}
+
+export type UpdatePartnerPayload = {
+  code?: string
+  legal_name?: string
+  trade_name?: string
+  description_markdown?: string
+  website_url?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  country?: string
+  contact_email?: string
+  contact_phone?: string
+  status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+  ceo_name?: string
+  ceo_title?: string
+  ceo_quote?: string
+  ceo_bio_markdown?: string
+  ceo_photo_media_id?: string | null
+}
+
+export type TeamMemberPayload = {
+  id?: string
+  full_name: string
+  role_title?: string
+  bio_markdown?: string
+  linkedin_url?: string
+  website_url?: string
+  photo_media_id?: string | null
+  sort_order?: number
+}
+
+export type LinkPartnerOffersPayload = {
+  primary_offer_id?: string | null
+  offer_ids?: string[]
+}
+
+export type PortfolioProjectPayload = {
+  title: string
+  category?: string
+  location?: string
+  start_date?: string
+  end_date?: string
+  short_summary?: string
+  description_markdown?: string
+  results_kpis?: string[]
+  status?: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
+}
+
+export const partnersAdminApi = {
+  listPartners: async (params?: {
+    status?: string
+    q?: string
+    limit?: number
+    offset?: number
+  }): Promise<PartnerListItem[]> => {
+    const queryParams = new URLSearchParams()
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.q) queryParams.append('q', params.q)
+    if (params?.limit) queryParams.append('limit', String(params.limit))
+    if (params?.offset) queryParams.append('offset', String(params.offset))
+    const query = queryParams.toString()
+    return apiRequest<PartnerListItem[]>(`admin/v1/partners${query ? `?${query}` : ''}`)
+  },
+
+  getPartner: async (partnerId: string): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}`)
+  },
+
+  createPartner: async (payload: CreatePartnerPayload): Promise<Partner> => {
+    return apiRequest<Partner>('admin/v1/partners', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updatePartner: async (partnerId: string, payload: UpdatePartnerPayload): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  publishPartner: async (partnerId: string): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/publish`, {
+      method: 'POST',
+    })
+  },
+
+  archivePartner: async (partnerId: string): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/archive`, {
+      method: 'POST',
+    })
+  },
+
+  linkPartnerOffers: async (partnerId: string, payload: LinkPartnerOffersPayload): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/offers`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updateTeamMembers: async (partnerId: string, members: TeamMemberPayload[]): Promise<Partner> => {
+    return apiRequest<Partner>(`admin/v1/partners/${partnerId}/team`, {
+      method: 'PUT',
+      body: JSON.stringify({ members }),
+    })
+  },
+
+  // Portfolio projects
+  createPortfolioProject: async (partnerId: string, payload: PortfolioProjectPayload): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/portfolio`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  updatePortfolioProject: async (partnerId: string, projectId: string, payload: Partial<PortfolioProjectPayload>): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/portfolio/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deletePortfolioProject: async (partnerId: string, projectId: string): Promise<void> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/portfolio/${projectId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // Media & Documents
+  presignPartnerUpload: async (
+    partnerId: string,
+    uploadType: 'media' | 'document',
+    fileName: string,
+    mimeType: string,
+    sizeBytes: number,
+    mediaType?: 'IMAGE' | 'VIDEO'
+  ): Promise<{ upload_url: string; key: string; required_headers: any; expires_in: number }> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/uploads/presign`, {
+      method: 'POST',
+      body: JSON.stringify({
+        upload_type: uploadType,
+        file_name: fileName,
+        mime_type: mimeType,
+        size_bytes: sizeBytes,
+        ...(mediaType && { media_type: mediaType }),
+      }),
+    })
+  },
+
+  createPartnerMedia: async (
+    partnerId: string,
+    payload: {
+      key: string
+      mime_type: string
+      size_bytes: number
+      media_type: 'IMAGE' | 'VIDEO'
+      width?: number
+      height?: number
+      duration_seconds?: number
+    }
+  ): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/media`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deletePartnerMedia: async (partnerId: string, mediaId: string): Promise<void> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/media/${mediaId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  createPartnerDocument: async (
+    partnerId: string,
+    payload: {
+      title: string
+      key: string
+      mime_type: string
+      size_bytes: number
+      document_type: 'PDF' | 'DOC' | 'OTHER'
+    }
+  ): Promise<any> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/documents`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  deletePartnerDocument: async (partnerId: string, docId: string): Promise<void> => {
+    return apiRequest(`admin/v1/partners/${partnerId}/documents/${docId}`, {
+      method: 'DELETE',
+    })
+  },
+}
+
+/**
+ * System API
+ */
+export const systemApi = {
+  getStorageInfo: async (): Promise<{ enabled: boolean; provider?: string; bucket?: string }> => {
+    return apiRequest('admin/v1/system/storage')
   },
 }
 

@@ -3,7 +3,7 @@ Application settings using pydantic-settings
 """
 
 from functools import lru_cache
-from typing import List, Union
+from typing import List, Union, Optional
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -74,13 +74,9 @@ class Settings(BaseSettings):
     
     # CORS settings - can be strings (comma-separated) or lists
     # Lists are preferred, but strings from env vars are auto-parsed
-    CORS_ALLOW_ORIGINS: Union[str, List[str]] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ]
-    CORS_ALLOW_METHODS: Union[str, List[str]] = [
-        "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
-    ]
+    # Defaults to empty list - MUST be set via environment variable
+    CORS_ALLOW_ORIGINS: Union[str, List[str]] = []
+    CORS_ALLOW_METHODS: Union[str, List[str]] = ["*"]  # Allow all methods for dev flexibility
     CORS_ALLOW_HEADERS: Union[str, List[str]] = [
         "Authorization",
         "Content-Type",
@@ -94,15 +90,33 @@ class Settings(BaseSettings):
         "X-Zand-Signature",
         "X-Zand-Timestamp",
     ]
-    CORS_ALLOW_CREDENTIALS: bool = True  # Allow credentials in CORS requests
+    CORS_ALLOW_CREDENTIALS: bool = True  # Allow credentials (cookies, Authorization headers) for frontend-admin uploads
     
     # Legacy: ALLOWED_ORIGINS (for backward compatibility)
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+    # Defaults to empty - MUST be set via environment variable
+    ALLOWED_ORIGINS: str = ""
 
     # API Configuration
     API_V1_PREFIX: str = "/api/v1"
     ADMIN_V1_PREFIX: str = "/admin/v1"
     WEBHOOKS_V1_PREFIX: str = "/webhooks/v1"
+    
+    # S3/R2 Storage Configuration
+    STORAGE_PROVIDER: str = "s3"  # "s3" for AWS S3 or Cloudflare R2
+    S3_ENDPOINT_URL: str = ""  # Required for R2 (e.g., https://<account-id>.r2.cloudflarestorage.com), empty for AWS S3
+    S3_REGION: str = "auto"  # "auto" for R2, or AWS region like "eu-west-1"
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    S3_BUCKET: str = ""
+    S3_PUBLIC_BASE_URL: str = ""  # Optional: CDN/public base URL (e.g., https://cdn.example.com)
+    S3_PRESIGN_EXPIRES_SECONDS: int = 900  # Presigned URL expiration (default: 15 minutes)
+    S3_KEY_PREFIX: str = "offers"  # Prefix for all object keys (e.g., "offers/{offer_id}/...")
+    ARTICLES_KEY_PREFIX: str = "articles"  # Prefix for article media keys (default: "articles", fallback if not set)
+    
+    # Upload size limits (in bytes)
+    S3_MAX_DOCUMENT_SIZE: int = 50 * 1024 * 1024  # 50MB default
+    S3_MAX_VIDEO_SIZE: int = 200 * 1024 * 1024  # 200MB default
+    S3_MAX_IMAGE_SIZE: int = 10 * 1024 * 1024  # 10MB default
 
     @field_validator('CORS_ALLOW_ORIGINS', mode='before')
     @classmethod
@@ -193,6 +207,55 @@ class Settings(BaseSettings):
         if self.OIDC_ISSUER_URL:
             return f"{self.OIDC_ISSUER_URL.rstrip('/')}/.well-known/jwks.json"
         return ""
+    
+    @property
+    def storage_enabled(self) -> bool:
+        """
+        Check if storage (S3/R2) is properly configured.
+        Requires: bucket, access_key_id, secret_access_key.
+        For R2: endpoint_url is also required.
+        For AWS: endpoint_url is optional (uses default AWS endpoints).
+        """
+        has_basic_config = bool(
+            self.S3_BUCKET and 
+            self.S3_BUCKET.strip() and
+            self.S3_ACCESS_KEY_ID and 
+            self.S3_ACCESS_KEY_ID.strip() and
+            self.S3_SECRET_ACCESS_KEY and 
+            self.S3_SECRET_ACCESS_KEY.strip()
+        )
+        
+        # If endpoint_url is provided, it must be non-empty (R2 requirement)
+        # If not provided, assume AWS (which doesn't require it)
+        if self.S3_ENDPOINT_URL:
+            return has_basic_config and bool(self.S3_ENDPOINT_URL.strip())
+        
+        # For AWS, basic config is enough
+        return has_basic_config
+    
+    def get_storage_disabled_reason(self) -> Optional[str]:
+        """
+        Get reason why storage is disabled (for diagnostics).
+        Returns None if storage is enabled.
+        """
+        if self.storage_enabled:
+            return None
+        
+        missing = []
+        if not self.S3_BUCKET or not self.S3_BUCKET.strip():
+            missing.append("S3_BUCKET")
+        if not self.S3_ACCESS_KEY_ID or not self.S3_ACCESS_KEY_ID.strip():
+            missing.append("S3_ACCESS_KEY_ID")
+        if not self.S3_SECRET_ACCESS_KEY or not self.S3_SECRET_ACCESS_KEY.strip():
+            missing.append("S3_SECRET_ACCESS_KEY")
+        if self.S3_ENDPOINT_URL and not self.S3_ENDPOINT_URL.strip():
+            missing.append("S3_ENDPOINT_URL (empty)")
+        elif self.S3_ENDPOINT_URL and not self.S3_ENDPOINT_URL.startswith("https://"):
+            missing.append("S3_ENDPOINT_URL (invalid format)")
+        
+        if missing:
+            return f"Missing or empty: {', '.join(missing)}"
+        return "Unknown configuration issue"
 
 
 @lru_cache()

@@ -34,6 +34,8 @@ from app.models import (
     Operation,
     LedgerEntry,
     AuditLog,
+    Offer,
+    OfferInvestment,
 )
 
 target_metadata = Base.metadata

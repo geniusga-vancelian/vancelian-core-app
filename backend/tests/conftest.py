@@ -13,7 +13,9 @@ from redis import Redis
 
 # Set test environment variables before importing app
 os.environ["ENV"] = "test"
-os.environ["DATABASE_URL"] = "postgresql://vancelian:vancelian_password@localhost:5432/vancelian_core_test"
+# Use 'postgres' service name when running in Docker, 'localhost' when running locally
+db_host = os.getenv("TEST_DB_HOST", "postgres")  # Default to 'postgres' for Docker
+os.environ["DATABASE_URL"] = f"postgresql://vancelian:vancelian_password@{db_host}:5432/vancelian_core_test"
 os.environ["REDIS_URL"] = "redis://localhost:6379/1"  # Use DB 1 for tests
 os.environ["SECRET_KEY"] = "test-secret-key-min-32-chars-for-testing-only"
 os.environ["LOG_LEVEL"] = "DEBUG"

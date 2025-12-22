@@ -203,7 +203,7 @@ export default function ZandWebhookPage() {
             <p>Possible causes:</p>
             <ul className="list-disc list-inside ml-2 mt-1">
               <li>Not logged in or session expired - <a href="/login" className="underline">Login here</a></li>
-              <li>Backend not running on http://localhost:8000</li>
+              <li>Backend not running (check NEXT_PUBLIC_API_BASE_URL)</li>
               <li>Missing ADMIN role permissions</li>
             </ul>
           </div>

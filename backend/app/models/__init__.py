@@ -30,6 +30,27 @@ from app.core.ledger.models import Operation, OperationType, OperationStatus, Le
 # 6. AuditLog model (depends on User and Role)
 from app.core.compliance.models import AuditLog
 
+# 7. Offer models (depends on User and Operation)
+from app.core.offers.models import (
+    Offer, OfferInvestment, OfferStatus, OfferInvestmentStatus,
+    InvestmentIntent, InvestmentIntentStatus,
+    OfferMedia, MediaType, MediaVisibility,
+    OfferDocument, DocumentKind, DocumentVisibility,
+    OfferTimelineEvent,
+)
+
+# 8. Article models (depends on Offer via many-to-many)
+from app.core.articles.models import (
+    Article, ArticleMedia, ArticleStatus, ArticleMediaType, article_offers,
+)
+
+# 9. Partner models (depends on Offer via many-to-many)
+from app.core.partners.models import (
+    Partner, PartnerStatus, PartnerTeamMember, PartnerMedia, PartnerMediaType,
+    PartnerDocument, PartnerDocumentType, PartnerPortfolioProject,
+    PartnerPortfolioProjectStatus, PartnerPortfolioMedia, partner_offers,
+)
+
 # Export all for convenience
 __all__ = [
     "Base",
@@ -47,5 +68,29 @@ __all__ = [
     "LedgerEntryType",
     "AuditLog",
     "Role",
+    "Offer",
+    "OfferInvestment",
+    "OfferStatus",
+    "OfferInvestmentStatus",
+    "InvestmentIntent",
+    "InvestmentIntentStatus",
+    "OfferMedia",
+    "MediaType",
+    "MediaVisibility",
+    "OfferDocument",
+    "DocumentKind",
+    "DocumentVisibility",
+    "OfferTimelineEvent",
+    "Partner",
+    "PartnerStatus",
+    "PartnerTeamMember",
+    "PartnerMedia",
+    "PartnerMediaType",
+    "PartnerDocument",
+    "PartnerDocumentType",
+    "PartnerPortfolioProject",
+    "PartnerPortfolioProjectStatus",
+    "PartnerPortfolioMedia",
+    "partner_offers",
 ]
 

@@ -1,0 +1,201 @@
+{
+  "timestamp": "2025-12-21T06:17:00.943542",
+  "database_url": "postgres:5432/vancelian_core",
+  "database_name": "vancelian_core",
+  "postgres_version": "PostgreSQL 15.15 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+  "overall_status": "PASS",
+  "checks": [
+    {
+      "name": "Alembic Migrations",
+      "status": "PASS",
+      "message": "Current Alembic revision: a1b2c3d4e5f7",
+      "details": {
+        "current_version": "a1b2c3d4e5f7"
+      }
+    },
+    {
+      "name": "Offers Table",
+      "status": "PASS",
+      "message": "All required columns present (10/10)",
+      "details": {
+        "found_columns": [
+          "id",
+          "cover_media_id",
+          "promo_video_media_id",
+          "marketing_title",
+          "marketing_subtitle",
+          "location_label",
+          "marketing_why",
+          "marketing_highlights",
+          "marketing_breakdown",
+          "marketing_metrics"
+        ],
+        "total_columns": 24
+      }
+    },
+    {
+      "name": "Offer Media Table",
+      "status": "PASS",
+      "message": "All required columns present (7/7)",
+      "details": {
+        "found_columns": [
+          "id",
+          "offer_id",
+          "type",
+          "key",
+          "mime_type",
+          "size_bytes",
+          "created_at"
+        ]
+      }
+    },
+    {
+      "name": "Articles Table",
+      "status": "PASS",
+      "message": "All required columns present (19/19)",
+      "details": {
+        "found_columns": [
+          "id",
+          "slug",
+          "status",
+          "title",
+          "subtitle",
+          "excerpt",
+          "content_markdown",
+          "content_html",
+          "cover_media_id",
+          "promo_video_media_id",
+          "author_name",
+          "published_at",
+          "created_at",
+          "updated_at",
+          "seo_title",
+          "seo_description",
+          "tags",
+          "is_featured",
+          "allow_comments"
+        ]
+      }
+    },
+    {
+      "name": "Article Media Table",
+      "status": "PASS",
+      "message": "All required columns present (10/10)",
+      "details": {
+        "found_columns": [
+          "id",
+          "article_id",
+          "type",
+          "key",
+          "mime_type",
+          "size_bytes",
+          "width",
+          "height",
+          "duration_seconds",
+          "created_at"
+        ]
+      }
+    },
+    {
+      "name": "Article Offers Table",
+      "status": "PASS",
+      "message": "All required columns present (2/2)",
+      "details": {
+        "found_columns": [
+          "article_id",
+          "offer_id"
+        ]
+      }
+    },
+    {
+      "name": "Foreign Keys",
+      "status": "PASS",
+      "message": "All required foreign keys present (8/8)",
+      "details": {
+        "found": [
+          {
+            "constraint": "fk_offer_media_offer_id",
+            "table": "offer_media",
+            "column": "offer_id",
+            "references": "offers.id",
+            "on_delete": "NO ACTION"
+          },
+          {
+            "constraint": "fk_offers_cover_media_id",
+            "table": "offers",
+            "column": "cover_media_id",
+            "references": "offer_media.id",
+            "on_delete": "SET NULL"
+          },
+          {
+            "constraint": "fk_offers_promo_video_media_id",
+            "table": "offers",
+            "column": "promo_video_media_id",
+            "references": "offer_media.id",
+            "on_delete": "SET NULL"
+          },
+          {
+            "constraint": "fk_article_media_article_id",
+            "table": "article_media",
+            "column": "article_id",
+            "references": "articles.id",
+            "on_delete": "CASCADE"
+          },
+          {
+            "constraint": "fk_articles_cover_media_id",
+            "table": "articles",
+            "column": "cover_media_id",
+            "references": "article_media.id",
+            "on_delete": "SET NULL"
+          },
+          {
+            "constraint": "fk_articles_promo_video_media_id",
+            "table": "articles",
+            "column": "promo_video_media_id",
+            "references": "article_media.id",
+            "on_delete": "SET NULL"
+          },
+          {
+            "constraint": "fk_article_offers_article_id",
+            "table": "article_offers",
+            "column": "article_id",
+            "references": "articles.id",
+            "on_delete": "CASCADE"
+          },
+          {
+            "constraint": "fk_article_offers_offer_id",
+            "table": "article_offers",
+            "column": "offer_id",
+            "references": "offers.id",
+            "on_delete": "CASCADE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Indexes",
+      "status": "PASS",
+      "message": "All recommended indexes present (11/11)",
+      "details": {
+        "found": [
+          "offer_media.offer_id",
+          "offers.cover_media_id",
+          "offers.promo_video_media_id",
+          "articles.slug",
+          "articles.status",
+          "articles.published_at",
+          "articles.is_featured",
+          "articles.cover_media_id",
+          "articles.promo_video_media_id",
+          "article_media.article_id",
+          "article_offers.offer_id"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "pass": 8,
+    "fail": 0,
+    "warn": 0
+  }
+}

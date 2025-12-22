@@ -1,0 +1,2008 @@
+"use client"
+
+import { useEffect, useState, useRef } from "react"
+import { useRouter, useParams } from "next/navigation"
+import Link from "next/link"
+import { offersAdminApi, systemApi, parseApiError, type Offer, type UpdateOfferPayload } from "@/lib/api"
+import { normalizeMarketingPayload } from "@/lib/marketingPayload"
+import { ArticlePicker } from "@/components/ArticlePicker"
+
+interface Investment {
+  id: string
+  offer_id: string
+  user_id: string
+  user_email: string
+  requested_amount: string
+  allocated_amount: string
+  currency: string
+  status: 'PENDING' | 'CONFIRMED' | 'REJECTED'
+  created_at: string
+  updated_at?: string
+  idempotency_key?: string
+}
+
+interface MediaItem {
+  id: string
+  offer_id: string
+  type: 'IMAGE' | 'VIDEO'
+  url?: string
+  mime_type: string
+  size_bytes: number
+  sort_order: number
+  is_cover: boolean
+  created_at: string
+  width?: number
+  height?: number
+  duration_seconds?: number
+}
+
+interface DocumentItem {
+  id: string
+  offer_id: string
+  name: string
+  kind: string
+  url?: string
+  mime_type: string
+  size_bytes: number
+  created_at: string
+}
+
+export default function OfferDetailPage() {
+  const router = useRouter()
+  const params = useParams()
+  const offerId = params.id as string
+  
+  const [offer, setOffer] = useState<Offer | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [traceId, setTraceId] = useState<string | null>(null)
+  
+  const [editing, setEditing] = useState(false)
+  const [editForm, setEditForm] = useState<UpdateOfferPayload>({})
+  const [saving, setSaving] = useState(false)
+
+  // Investments state
+  const [investments, setInvestments] = useState<Investment[]>([])
+  const [investmentsTotal, setInvestmentsTotal] = useState(0)
+  const [investmentsLoading, setInvestmentsLoading] = useState(false)
+  const [investmentsError, setInvestmentsError] = useState<string | null>(null)
+  const [investmentsTraceId, setInvestmentsTraceId] = useState<string | null>(null)
+  const [investmentStatusFilter, setInvestmentStatusFilter] = useState<string>("ALL")
+
+  // Media state
+  const [media, setMedia] = useState<MediaItem[]>([])
+  const [mediaLoading, setMediaLoading] = useState(false)
+  const [mediaError, setMediaError] = useState<string | null>(null)
+  const [mediaTraceId, setMediaTraceId] = useState<string | null>(null)
+  const [uploadingMedia, setUploadingMedia] = useState(false)
+  const mediaFileInputRef = useRef<HTMLInputElement>(null)
+  const videoFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Documents state
+  const [documents, setDocuments] = useState<DocumentItem[]>([])
+  const [documentsLoading, setDocumentsLoading] = useState(false)
+  const [documentsError, setDocumentsError] = useState<string | null>(null)
+  const [documentsTraceId, setDocumentsTraceId] = useState<string | null>(null)
+  const [uploadingDocument, setUploadingDocument] = useState(false)
+  const [showDocumentForm, setShowDocumentForm] = useState(false)
+  const [documentForm, setDocumentForm] = useState({ name: '', kind: 'BROCHURE' as const, file: null as File | null })
+  const documentFileInputRef = useRef<HTMLInputElement>(null)
+
+  // Storage status
+  const [storageEnabled, setStorageEnabled] = useState<boolean | null>(null)
+  const [storageLoading, setStorageLoading] = useState(false)
+  const [storageError, setStorageError] = useState<string | null>(null)
+
+  // Marketing V1.1 state
+  const [marketingForm, setMarketingForm] = useState<{
+    marketing_title?: string
+    marketing_subtitle?: string
+    location_label?: string
+    location_lat?: string
+    location_lng?: string
+    marketing_why?: Array<{ title: string; body: string }>
+    marketing_highlights?: string[]
+    marketing_breakdown?: { purchase_cost?: number; transaction_cost?: number; running_cost?: number }
+    marketing_metrics?: { gross_yield?: number; net_yield?: number; annualised_return?: number; investors_count?: number; days_left?: number }
+  }>({})
+  const [savingMarketing, setSavingMarketing] = useState(false)
+  const [marketingError, setMarketingError] = useState<string | null>(null)
+  const [marketingSuccess, setMarketingSuccess] = useState(false)
+  const [marketingTraceId, setMarketingTraceId] = useState<string | null>(null)
+
+  // Timeline state
+  const [timelineEvents, setTimelineEvents] = useState<Array<{
+    id: string
+    title: string
+    description: string
+    occurred_at: string | null
+    sort_order: number
+    article: { id: string; title: string; slug: string; published_at: string | null; cover_url: string | null } | null
+    created_at: string
+    updated_at: string | null
+  }>>([])
+  const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineError, setTimelineError] = useState<string | null>(null)
+  const [showTimelineModal, setShowTimelineModal] = useState(false)
+  const [editingEventId, setEditingEventId] = useState<string | null>(null)
+  const [timelineForm, setTimelineForm] = useState<{
+    title: string
+    description: string
+    occurred_at: string
+    article_id: string | null
+  }>({
+    title: "",
+    description: "",
+    occurred_at: "",
+    article_id: null,
+  })
+  const [savingTimeline, setSavingTimeline] = useState(false)
+
+  useEffect(() => {
+    if (offerId) {
+      loadOffer()
+      loadInvestments()
+      loadMedia()
+      loadDocuments()
+      loadStorageStatus()
+    }
+  }, [offerId, investmentStatusFilter])
+
+  const loadStorageStatus = async () => {
+    setStorageLoading(true)
+    setStorageError(null)
+    try {
+      const info = await systemApi.getStorageInfo()
+      setStorageEnabled(info.enabled)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setStorageError(apiError.message || "Failed to check storage status")
+      // If we can't check storage status, assume it's not configured
+      setStorageEnabled(false)
+    } finally {
+      setStorageLoading(false)
+    }
+  }
+
+  const loadOffer = async () => {
+    setLoading(true)
+    setError(null)
+    setTraceId(null)
+    
+    try {
+      const data = await offersAdminApi.getOffer(offerId)
+      setOffer(data)
+      setEditForm({
+        name: data.name,
+        description: data.description || "",
+        max_amount: data.max_amount,
+        maturity_date: data.maturity_date || undefined,
+      })
+      // Initialize marketing form
+      setMarketingForm({
+        marketing_title: data.marketing_title || "",
+        marketing_subtitle: data.marketing_subtitle || "",
+        location_label: data.location_label || "",
+        location_lat: data.location_lat || "",
+        location_lng: data.location_lng || "",
+        marketing_why: data.marketing_why || [],
+        marketing_highlights: data.marketing_highlights || [],
+        marketing_breakdown: data.marketing_breakdown || {},
+        marketing_metrics: data.marketing_metrics || {},
+      })
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to load offer")
+      setTraceId(apiError.trace_id || null)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadInvestments = async () => {
+    if (!offerId) return
+    
+    setInvestmentsLoading(true)
+    setInvestmentsError(null)
+    setInvestmentsTraceId(null)
+    
+    try {
+      const params: any = { limit: 50, offset: 0 }
+      if (investmentStatusFilter && investmentStatusFilter !== "ALL") {
+        params.status = investmentStatusFilter
+      }
+      const response = await offersAdminApi.listOfferInvestments(offerId, params)
+      setInvestments(response.items || [])
+      setInvestmentsTotal(response.total || 0)
+    } catch (err: any) {
+      console.error('[Offers Detail] Error loading investments:', err)
+      const apiError = parseApiError(err)
+      setInvestmentsError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to load investments")
+      setInvestmentsTraceId(apiError.trace_id || null)
+    } finally {
+      setInvestmentsLoading(false)
+    }
+  }
+
+  const loadMedia = async () => {
+    if (!offerId) return
+    
+    setMediaLoading(true)
+    setMediaError(null)
+    setMediaTraceId(null)
+    
+    try {
+      const data = await offersAdminApi.listOfferMedia(offerId)
+      // Sort by sort_order
+      const sorted = [...data].sort((a, b) => a.sort_order - b.sort_order)
+      setMedia(sorted)
+    } catch (err: any) {
+      console.error('[Offers Detail] Error loading media:', err)
+      const apiError = parseApiError(err)
+      setMediaError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to load media")
+      setMediaTraceId(apiError.trace_id || null)
+    } finally {
+      setMediaLoading(false)
+    }
+  }
+
+  const loadDocuments = async () => {
+    if (!offerId) return
+    
+    setDocumentsLoading(true)
+    setDocumentsError(null)
+    setDocumentsTraceId(null)
+    
+    try {
+      const data = await offersAdminApi.listOfferDocuments(offerId)
+      setDocuments(data)
+    } catch (err: any) {
+      console.error('[Offers Detail] Error loading documents:', err)
+      const apiError = parseApiError(err)
+      setDocumentsError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to load documents")
+      setDocumentsTraceId(apiError.trace_id || null)
+    } finally {
+      setDocumentsLoading(false)
+    }
+  }
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    setError(null)
+    setTraceId(null)
+
+    try {
+      const updated = await offersAdminApi.updateOffer(offerId, editForm)
+      setOffer(updated)
+      setEditing(false)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to update offer")
+      setTraceId(apiError.trace_id || null)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleStatusAction = async (action: 'publish' | 'pause' | 'close') => {
+    try {
+      let updated: Offer
+      if (action === 'publish') {
+        updated = await offersAdminApi.publishOffer(offerId)
+      } else if (action === 'pause') {
+        updated = await offersAdminApi.pauseOffer(offerId)
+      } else {
+        updated = await offersAdminApi.closeOffer(offerId)
+      }
+      setOffer(updated)
+      loadInvestments() // Refresh investments after status change
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || `Failed to ${action} offer`)
+      setTraceId(apiError.trace_id || null)
+    }
+  }
+
+  const getStatusBadge = (status: string) => {
+    const colors = {
+      DRAFT: "bg-gray-100 text-gray-800",
+      LIVE: "bg-green-100 text-green-800",
+      PAUSED: "bg-yellow-100 text-yellow-800",
+      CLOSED: "bg-red-100 text-red-800",
+    }
+    return colors[status as keyof typeof colors] || "bg-gray-100 text-gray-800"
+  }
+
+  const getInvestmentStatusBadge = (status: string) => {
+    const colors = {
+      PENDING: "bg-yellow-100 text-yellow-800",
+      CONFIRMED: "bg-green-100 text-green-800",
+      REJECTED: "bg-red-100 text-red-800",
+    }
+    return colors[status as keyof typeof colors] || "bg-gray-100 text-gray-800"
+  }
+
+  const formatDateTime = (dateString: string): string => {
+    try {
+      return new Date(dateString).toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    } catch {
+      return "-"
+    }
+  }
+
+  const getRecommendations = () => {
+    if (!offer) return { warnings: [], suggestions: [], isInvestable: false }
+    
+    const warnings: string[] = []
+    const suggestions: string[] = []
+    const now = new Date()
+    
+    // Check maturity date
+    const maturityPassed = offer.maturity_date ? new Date(offer.maturity_date) <= now : false
+    const remainingAmount = parseFloat(offer.remaining_amount)
+    const isLive = offer.status === 'LIVE'
+    
+    // Investable badge: TRUE when (status === "LIVE") AND (remaining_amount > 0) AND (maturity_date in the future)
+    const isInvestable = isLive && remainingAmount > 0 && !maturityPassed
+    
+    // Warnings
+    if (!isLive) {
+      warnings.push("Offer is not LIVE (investments blocked).")
+    }
+    if (remainingAmount <= 0) {
+      warnings.push("Offer is full (remaining = 0).")
+    }
+    if (maturityPassed) {
+      warnings.push("Maturity date passed.")
+    }
+    
+    // Suggested actions
+    if (!isLive) {
+      suggestions.push("Set to LIVE when ready to accept investments.")
+    } else if (remainingAmount <= 0) {
+      suggestions.push("Close offer (sold out).")
+    } else if (maturityPassed) {
+      suggestions.push("Close offer and prepare redemption flow.")
+    } else {
+      suggestions.push("Promote offer (still open).")
+    }
+    
+    return { warnings, suggestions, isInvestable }
+  }
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      // Optional: show toast notification
+    })
+  }
+
+  const shortenIdempotencyKey = (key: string | undefined): string => {
+    if (!key) return "-"
+    return key.length > 12 ? `${key.substring(0, 8)}...` : key
+  }
+
+  // Media upload handlers
+  const handleMediaUpload = async (files: FileList | null, type: 'IMAGE' | 'VIDEO') => {
+    // Guard: don't proceed if storage is not enabled
+    if (storageEnabled === false) {
+      setMediaError("Storage is not configured. Please configure S3/R2 storage to enable uploads.")
+      return
+    }
+    
+    if (!files || files.length === 0 || !offerId) return
+    
+    setUploadingMedia(true)
+    setMediaError(null)
+    setMediaTraceId(null)
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        
+        // Step 1: Presign
+        const presignResponse = await offersAdminApi.presignUpload(offerId, {
+          upload_type: 'media',
+          file_name: file.name,
+          mime_type: file.type,
+          size_bytes: file.size,
+          media_type: type,
+        })
+
+        // Step 2: PUT to S3
+        const uploadResponse = await fetch(presignResponse.upload_url, {
+          method: 'PUT',
+          headers: presignResponse.required_headers,
+          body: file,
+        })
+
+        if (!uploadResponse.ok) {
+          throw new Error(`Upload failed: ${uploadResponse.statusText}`)
+        }
+
+        // Step 3: Create metadata
+        const maxSortOrder = media.length > 0 ? Math.max(...media.map(m => m.sort_order)) : -1
+        await offersAdminApi.createOfferMedia(offerId, {
+          key: presignResponse.key,
+          mime_type: file.type,
+          size_bytes: file.size,
+          type: type,
+          sort_order: maxSortOrder + 1,
+          is_cover: media.length === 0 && type === 'IMAGE', // First image is cover by default
+          visibility: 'PUBLIC',
+        })
+      }
+
+      // Reload media
+      await loadMedia()
+    } catch (err: any) {
+      console.error('[Offers Detail] Error uploading media:', err)
+      const apiError = parseApiError(err)
+      setMediaError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to upload media")
+      setMediaTraceId(apiError.trace_id || null)
+    } finally {
+      setUploadingMedia(false)
+    }
+  }
+
+  const handleSetCover = async (mediaId: string) => {
+    if (!offerId) return
+
+    try {
+      // First, unset all covers
+      const updates = media.map(m => ({
+        id: m.id,
+        sort_order: m.sort_order,
+        is_cover: m.id === mediaId,
+      }))
+      
+      await offersAdminApi.reorderOfferMedia(offerId, updates)
+      await loadMedia()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setMediaError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to set cover")
+      setMediaTraceId(apiError.trace_id || null)
+    }
+  }
+
+  const handleDeleteMedia = async (mediaId: string) => {
+    if (!offerId || !confirm('Delete this media item?')) return
+
+    try {
+      await offersAdminApi.deleteOfferMedia(offerId, mediaId)
+      await loadMedia()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setMediaError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to delete media")
+      setMediaTraceId(apiError.trace_id || null)
+    }
+  }
+
+  const handleReorderMedia = async (mediaId: string, direction: 'up' | 'down') => {
+    if (!offerId) return
+
+    const currentIndex = media.findIndex(m => m.id === mediaId)
+    if (currentIndex === -1) return
+
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
+    if (newIndex < 0 || newIndex >= media.length) return
+
+    try {
+      // Swap sort_order values
+      const currentItem = media[currentIndex]
+      const targetItem = media[newIndex]
+      
+      const updates = media.map((m) => {
+        if (m.id === currentItem.id) {
+          return { id: m.id, sort_order: targetItem.sort_order, is_cover: m.is_cover }
+        } else if (m.id === targetItem.id) {
+          return { id: m.id, sort_order: currentItem.sort_order, is_cover: m.is_cover }
+        } else {
+          return { id: m.id, sort_order: m.sort_order, is_cover: m.is_cover }
+        }
+      })
+      
+      await offersAdminApi.reorderOfferMedia(offerId, updates)
+      await loadMedia()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setMediaError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to reorder media")
+      setMediaTraceId(apiError.trace_id || null)
+    }
+  }
+
+  // Document upload handler
+  const handleDocumentUpload = async () => {
+    // Guard: don't proceed if storage is not enabled
+    if (storageEnabled === false) {
+      setDocumentsError("Storage is not configured. Please configure S3/R2 storage to enable uploads.")
+      return
+    }
+    
+    if (!offerId || !documentForm.file || !documentForm.name) return
+
+    setUploadingDocument(true)
+    setDocumentsError(null)
+    setDocumentsTraceId(null)
+
+    try {
+      const file = documentForm.file
+
+      // Step 1: Presign
+      const presignResponse = await offersAdminApi.presignUpload(offerId, {
+        upload_type: 'document',
+        file_name: file.name,
+        mime_type: file.type,
+        size_bytes: file.size,
+        document_kind: documentForm.kind,
+      })
+
+      // Step 2: PUT to S3
+      const uploadResponse = await fetch(presignResponse.upload_url, {
+        method: 'PUT',
+        headers: presignResponse.required_headers,
+        body: file,
+      })
+
+      if (!uploadResponse.ok) {
+        throw new Error(`Upload failed: ${uploadResponse.statusText}`)
+      }
+
+      // Step 3: Create metadata
+      await offersAdminApi.createOfferDocument(offerId, {
+        name: documentForm.name,
+        kind: documentForm.kind,
+        key: presignResponse.key,
+        mime_type: file.type,
+        size_bytes: file.size,
+        visibility: 'PUBLIC',
+      })
+
+      // Reset form
+      setDocumentForm({ name: '', kind: 'BROCHURE', file: null })
+      setShowDocumentForm(false)
+      if (documentFileInputRef.current) {
+        documentFileInputRef.current.value = ''
+      }
+
+      // Reload documents
+      await loadDocuments()
+    } catch (err: any) {
+      console.error('[Offers Detail] Error uploading document:', err)
+      const apiError = parseApiError(err)
+      setDocumentsError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to upload document")
+      setDocumentsTraceId(apiError.trace_id || null)
+    } finally {
+      setUploadingDocument(false)
+    }
+  }
+
+  const handleDeleteDocument = async (docId: string) => {
+    if (!offerId || !confirm('Delete this document?')) return
+
+    try {
+      await offersAdminApi.deleteOfferDocument(offerId, docId)
+      await loadDocuments()
+    } catch (err: any) {
+      console.error('[Offers Detail] Error deleting document:', err)
+      const apiError = parseApiError(err)
+      setDocumentsError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to delete document")
+      setDocumentsTraceId(apiError.trace_id || null)
+    }
+  }
+
+  // Marketing V1.1 handlers
+  const handleSaveMarketing = async () => {
+    if (!offerId) return
+    setSavingMarketing(true)
+    setMarketingError(null)
+    setMarketingSuccess(false)
+    setMarketingTraceId(null)
+
+    try {
+      // Normalize payload: convert empty strings to undefined, coerce types
+      const normalizedPayload = normalizeMarketingPayload(marketingForm)
+      
+      // Log payload in dev for debugging
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[Marketing] Normalized payload:', normalizedPayload)
+      }
+      
+      const updated = await offersAdminApi.updateOfferMarketing(offerId, normalizedPayload)
+      setOffer(updated)
+      setMarketingSuccess(true)
+      setTimeout(() => setMarketingSuccess(false), 3000)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      
+      // Format validation errors for display
+      let errorMessage = apiError.message || "Failed to save marketing"
+      
+      if (err.status === 422 && err.validationErrors && Array.isArray(err.validationErrors)) {
+        // Build detailed validation error message
+        const validationMessages = err.validationErrors.map((ve: any) => {
+          const field = ve.field || 'unknown'
+          const msg = ve.message || 'Validation error'
+          return `${field}: ${msg}`
+        })
+        errorMessage = `Validation errors:\n${validationMessages.join('\n')}`
+      } else if (apiError.code) {
+        errorMessage = `${apiError.code}: ${errorMessage}`
+      }
+      
+      setMarketingError(errorMessage)
+      setMarketingTraceId(apiError.trace_id || null)
+      
+      // Log full error in console for debugging
+      console.error('[Marketing] Save failed:', {
+        error: err,
+        apiError,
+        validationErrors: err.validationErrors,
+      })
+    } finally {
+      setSavingMarketing(false)
+    }
+  }
+
+  const handleSeedMarketingDefaults = async () => {
+    if (!offerId || !confirm('Seed default marketing values? This will only fill empty fields.')) return
+
+    try {
+      const updated = await offersAdminApi.seedOfferMarketingDefaults(offerId)
+      setOffer(updated)
+      setMarketingForm({
+        marketing_title: updated.marketing_title || "",
+        marketing_subtitle: updated.marketing_subtitle || "",
+        location_label: updated.location_label || "",
+        location_lat: updated.location_lat || "",
+        location_lng: updated.location_lng || "",
+        marketing_why: updated.marketing_why || [],
+        marketing_highlights: updated.marketing_highlights || [],
+        marketing_breakdown: updated.marketing_breakdown || {},
+        marketing_metrics: updated.marketing_metrics || {},
+      })
+      setMarketingSuccess(true)
+      setTimeout(() => setMarketingSuccess(false), 3000)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setMarketingError(apiError.code ? `${apiError.code}: ${apiError.message}` : apiError.message || "Failed to seed defaults")
+    }
+  }
+
+  const handleAddWhyItem = () => {
+    setMarketingForm({
+      ...marketingForm,
+      marketing_why: [...(marketingForm.marketing_why || []), { title: "", body: "" }],
+    })
+  }
+
+  const handleRemoveWhyItem = (index: number) => {
+    const why = [...(marketingForm.marketing_why || [])]
+    why.splice(index, 1)
+    setMarketingForm({ ...marketingForm, marketing_why: why })
+  }
+
+  const handleUpdateWhyItem = (index: number, field: 'title' | 'body', value: string) => {
+    const why = [...(marketingForm.marketing_why || [])]
+    why[index] = { ...why[index], [field]: value }
+    setMarketingForm({ ...marketingForm, marketing_why: why })
+  }
+
+  const handleAddHighlight = () => {
+    const highlight = prompt('Enter highlight text (max 40 chars):')
+    if (highlight && highlight.trim() && highlight.length <= 40) {
+      setMarketingForm({
+        ...marketingForm,
+        marketing_highlights: [...(marketingForm.marketing_highlights || []), highlight.trim()],
+      })
+    }
+  }
+
+  const handleRemoveHighlight = (index: number) => {
+    const highlights = [...(marketingForm.marketing_highlights || [])]
+    highlights.splice(index, 1)
+    setMarketingForm({ ...marketingForm, marketing_highlights: highlights })
+  }
+
+  // Timeline handlers
+  const loadTimeline = async () => {
+    if (!offerId) return
+    setTimelineLoading(true)
+    setTimelineError(null)
+    try {
+      const events = await offersAdminApi.getOfferTimeline(offerId)
+      setTimelineEvents(events)
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to load timeline")
+    } finally {
+      setTimelineLoading(false)
+    }
+  }
+
+  const handleOpenTimelineModal = (eventId?: string) => {
+    if (eventId) {
+      const event = timelineEvents.find((e) => e.id === eventId)
+      if (event) {
+        setEditingEventId(eventId)
+        setTimelineForm({
+          title: event.title,
+          description: event.description,
+          occurred_at: event.occurred_at ? new Date(event.occurred_at).toISOString().slice(0, 16) : "",
+          article_id: event.article?.id || null,
+        })
+      }
+    } else {
+      setEditingEventId(null)
+      setTimelineForm({
+        title: "",
+        description: "",
+        occurred_at: "",
+        article_id: null,
+      })
+    }
+    setShowTimelineModal(true)
+  }
+
+  const handleCloseTimelineModal = () => {
+    setShowTimelineModal(false)
+    setEditingEventId(null)
+    setTimelineForm({
+      title: "",
+      description: "",
+      occurred_at: "",
+      article_id: null,
+    })
+  }
+
+  const handleSaveTimelineEvent = async () => {
+    if (!offerId) return
+    if (!timelineForm.title.trim() || !timelineForm.description.trim()) {
+      setTimelineError("Title and description are required")
+      return
+    }
+    setSavingTimeline(true)
+    setTimelineError(null)
+    try {
+      const payload: any = {
+        title: timelineForm.title.trim(),
+        description: timelineForm.description.trim(),
+        article_id: timelineForm.article_id || null,
+      }
+      if (timelineForm.occurred_at) {
+        payload.occurred_at = new Date(timelineForm.occurred_at).toISOString()
+      }
+      if (editingEventId) {
+        await offersAdminApi.updateTimelineEvent(offerId, editingEventId, payload)
+      } else {
+        await offersAdminApi.createTimelineEvent(offerId, payload)
+      }
+      await loadTimeline()
+      handleCloseTimelineModal()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to save timeline event")
+    } finally {
+      setSavingTimeline(false)
+    }
+  }
+
+  const handleDeleteTimelineEvent = async (eventId: string) => {
+    if (!offerId || !confirm("Delete this timeline event?")) return
+    try {
+      await offersAdminApi.deleteTimelineEvent(offerId, eventId)
+      await loadTimeline()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to delete timeline event")
+    }
+  }
+
+  const handleMoveTimelineEvent = async (eventId: string, direction: "up" | "down") => {
+    if (!offerId) return
+    const eventIndex = timelineEvents.findIndex((e) => e.id === eventId)
+    if (eventIndex === -1) return
+    if (direction === "up" && eventIndex === 0) return
+    if (direction === "down" && eventIndex === timelineEvents.length - 1) return
+
+    const newEvents = [...timelineEvents]
+    const targetIndex = direction === "up" ? eventIndex - 1 : eventIndex + 1
+    ;[newEvents[eventIndex], newEvents[targetIndex]] = [newEvents[targetIndex], newEvents[eventIndex]]
+
+    // Update sort orders
+    const items = newEvents.map((e, idx) => ({
+      id: e.id,
+      sort_order: idx,
+    }))
+
+    try {
+      await offersAdminApi.reorderTimelineEvents(offerId, items)
+      await loadTimeline()
+    } catch (err: any) {
+      const apiError = parseApiError(err)
+      setTimelineError(apiError.message || "Failed to reorder timeline events")
+    }
+  }
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  if (loading) {
+    return (
+      <main className="container mx-auto p-8">
+        <p>Loading...</p>
+      </main>
+    )
+  }
+
+  if (!offer) {
+    return (
+      <main className="container mx-auto p-8">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <p className="text-red-800">Offer not found</p>
+        </div>
+        <Link href="/offers" className="text-blue-600 hover:underline mt-4 inline-block">
+          ← Back to Offers
+        </Link>
+      </main>
+    )
+  }
+
+  const recommendations = getRecommendations()
+
+  return (
+    <main className="container mx-auto p-8 max-w-7xl">
+      <div className="mb-6">
+        <Link href="/offers" className="text-blue-600 hover:underline">
+          ← Back to Offers
+        </Link>
+      </div>
+
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">{offer.name}</h1>
+        <div className="flex gap-2">
+          {offer.status === 'DRAFT' && (
+            <button
+              onClick={() => handleStatusAction('publish')}
+              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+            >
+              Publish
+            </button>
+          )}
+          {offer.status === 'LIVE' && (
+            <>
+              <button
+                onClick={() => handleStatusAction('pause')}
+                className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700"
+              >
+                Pause
+              </button>
+              <button
+                onClick={() => handleStatusAction('close')}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+              >
+                Close
+              </button>
+            </>
+          )}
+          {offer.status === 'PAUSED' && (
+            <>
+              <button
+                onClick={() => handleStatusAction('publish')}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+              >
+                Resume
+              </button>
+              <button
+                onClick={() => handleStatusAction('close')}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+              >
+                Close
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setEditing(!editing)}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          >
+            {editing ? "Cancel Edit" : "Edit"}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+          <div className="text-red-800">{error}</div>
+          {traceId && (
+            <div className="text-xs text-red-600 font-mono mt-1">Trace ID: {traceId}</div>
+          )}
+        </div>
+      )}
+
+      {/* Recommendation / Ops Checklist */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Recommendation / Ops Checklist</h2>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium text-gray-700">Investable: </span>
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+              recommendations.isInvestable 
+                ? "bg-green-100 text-green-800" 
+                : "bg-red-100 text-red-800"
+            }`}>
+              {recommendations.isInvestable ? "TRUE" : "FALSE"}
+            </span>
+          </div>
+          
+          {recommendations.warnings.length > 0 && (
+            <div>
+              <p className="text-sm font-medium text-red-700 mb-1">Warnings:</p>
+              <ul className="list-disc list-inside text-sm text-red-600 space-y-1">
+                {recommendations.warnings.map((warning, idx) => (
+                  <li key={idx}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          {recommendations.suggestions.length > 0 && (
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-1">Suggested actions:</p>
+              <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
+                {recommendations.suggestions.map((suggestion, idx) => (
+                  <li key={idx}>{suggestion}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Offer Details Card */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        {editing ? (
+          <form onSubmit={handleUpdate}>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={editForm.name || ""}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <textarea
+                  value={editForm.description || ""}
+                  onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  rows={4}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Amount</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editForm.max_amount || ""}
+                  onChange={(e) => setEditForm({ ...editForm, max_amount: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Maturity Date</label>
+                <input
+                  type="datetime-local"
+                  value={editForm.maturity_date ? new Date(editForm.maturity_date).toISOString().slice(0, 16) : ""}
+                  onChange={(e) => setEditForm({ ...editForm, maturity_date: e.target.value || undefined })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save Changes"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditing(false)
+                    setEditForm({
+                      name: offer.name,
+                      description: offer.description || "",
+                      max_amount: offer.max_amount,
+                      maturity_date: offer.maturity_date || undefined,
+                    })
+                  }}
+                  className="bg-gray-200 text-gray-800 px-4 py-2 rounded hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-gray-500">Code</label>
+                <p className="text-lg font-mono">{offer.code}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Status</label>
+                <p>
+                  <span className={`px-2 py-1 rounded text-sm ${getStatusBadge(offer.status)}`}>
+                    {offer.status}
+                  </span>
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Currency</label>
+                <p className="text-lg">{offer.currency}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Max Amount</label>
+                <p className="text-lg font-mono">
+                  {parseFloat(offer.max_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {offer.currency}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Invested Amount</label>
+                <p className="text-lg font-mono">
+                  {parseFloat(offer.committed_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {offer.currency}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Remaining Amount</label>
+                <p className="text-lg font-mono text-green-600">
+                  {parseFloat(offer.remaining_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {offer.currency}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Fill Percentage</label>
+                <p className="text-lg font-mono">
+                  {((parseFloat(offer.committed_amount) / parseFloat(offer.max_amount)) * 100).toFixed(2)}%
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Maturity Date</label>
+                <p className="text-lg">
+                  {offer.maturity_date ? new Date(offer.maturity_date).toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }) : "-"}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Created At</label>
+                <p className="text-lg">
+                  {new Date(offer.created_at).toLocaleString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </p>
+              </div>
+              {offer.updated_at && (
+                <div>
+                  <label className="text-sm font-medium text-gray-500">Updated At</label>
+                  <p className="text-lg">
+                    {new Date(offer.updated_at).toLocaleString('en-US', {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+              )}
+            </div>
+            {offer.description && (
+              <div>
+                <label className="text-sm font-medium text-gray-500">Description</label>
+                <p className="mt-1 text-gray-700">{offer.description}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Media Section */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Media</h2>
+          <div className="flex gap-2">
+            <input
+              ref={mediaFileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => handleMediaUpload(e.target.files, 'IMAGE')}
+            />
+            <input
+              ref={videoFileInputRef}
+              type="file"
+              accept="video/*"
+              className="hidden"
+              onChange={(e) => handleMediaUpload(e.target.files, 'VIDEO')}
+            />
+            <button
+              onClick={() => {
+                if (storageEnabled === false) return
+                mediaFileInputRef.current?.click()
+              }}
+              disabled={uploadingMedia || storageLoading || storageEnabled === false}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              title={storageEnabled === false ? "Storage not configured (S3/R2). Configure env vars to enable uploads." : undefined}
+            >
+              {uploadingMedia ? "Uploading..." : "Upload Images"}
+            </button>
+            <button
+              onClick={() => {
+                if (storageEnabled === false) return
+                videoFileInputRef.current?.click()
+              }}
+              disabled={uploadingMedia || storageLoading || storageEnabled === false}
+              className="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              title={storageEnabled === false ? "Storage not configured (S3/R2). Configure env vars to enable uploads." : undefined}
+            >
+              {uploadingMedia ? "Uploading..." : "Add Promo Video"}
+            </button>
+          </div>
+        </div>
+
+        {storageLoading && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+            <div className="text-sm text-gray-600">Checking storage configuration...</div>
+          </div>
+        )}
+
+        {storageError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium mb-1">⚠️ Storage check failed</div>
+            <div className="text-sm text-red-700">{storageError}</div>
+          </div>
+        )}
+
+        {storageEnabled === false && !storageLoading && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+            <div className="text-yellow-800 font-medium mb-1">⚠️ Storage not configured</div>
+            <div className="text-sm text-yellow-700">
+              Media uploads require S3/R2 storage configuration. Set S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY environment variables.
+              See docs/STORAGE_R2_SETUP.md for setup instructions.
+            </div>
+          </div>
+        )}
+
+        {mediaError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium">{mediaError}</div>
+            {mediaTraceId && (
+              <div className="text-xs text-red-600 font-mono mt-1">Trace ID: {mediaTraceId}</div>
+            )}
+          </div>
+        )}
+
+        {mediaLoading ? (
+          <div className="text-center py-8 text-gray-500">Loading media...</div>
+        ) : media.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">No media uploaded yet</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Preview (left) */}
+            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+              <h3 className="text-sm font-medium text-gray-700 mb-2">Preview</h3>
+              {media.find(m => m.is_cover) ? (
+                <div className="relative">
+                  {media.find(m => m.is_cover)?.type === 'IMAGE' ? (
+                    media.find(m => m.is_cover)?.url ? (
+                      <img
+                        src={media.find(m => m.is_cover)!.url}
+                        alt="Cover"
+                        className="w-full h-64 object-cover rounded"
+                      />
+                    ) : (
+                      <div className="w-full h-64 bg-gray-200 rounded flex items-center justify-center text-gray-500">
+                        No preview (URL not available)
+                      </div>
+                    )
+                  ) : (
+                    <div className="w-full h-64 bg-gray-200 rounded flex items-center justify-center text-gray-500">
+                      <div className="text-center">
+                        <div className="text-2xl mb-2">🎥</div>
+                        <div className="text-sm">Video: {media.find(m => m.is_cover)?.mime_type || 'N/A'}</div>
+                      </div>
+                    </div>
+                  )}
+                  <span className="absolute top-2 right-2 bg-green-500 text-white px-2 py-1 rounded text-xs font-medium">
+                    Cover
+                  </span>
+                </div>
+              ) : (
+                <div className="w-full h-64 bg-gray-200 rounded flex items-center justify-center text-gray-500">
+                  No cover image set
+                </div>
+              )}
+            </div>
+
+            {/* List (right) */}
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {media.map((item) => (
+                <div
+                  key={item.id}
+                  className="border border-gray-200 rounded-lg p-3 flex items-center gap-3 hover:bg-gray-50"
+                >
+                  <div className="flex-shrink-0 w-16 h-16 bg-gray-200 rounded flex items-center justify-center overflow-hidden">
+                    {item.type === 'IMAGE' ? (
+                      item.url ? (
+                        <img src={item.url} alt={item.id} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="text-xs text-gray-500">IMG</div>
+                      )
+                    ) : (
+                      <div className="text-xs text-gray-500">🎥</div>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-gray-700">{item.type}</span>
+                      {item.is_cover && (
+                        <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">Cover</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {formatFileSize(item.size_bytes)} • {formatDateTime(item.created_at)}
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0 flex gap-1">
+                    {item.type === 'IMAGE' && !item.is_cover && (
+                      <button
+                        onClick={() => handleSetCover(item.id)}
+                        className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200"
+                        title="Set as cover"
+                      >
+                        Set Cover
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleReorderMedia(item.id, 'up')}
+                      disabled={media.indexOf(item) === 0}
+                      className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-50"
+                      title="Move up"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      onClick={() => handleReorderMedia(item.id, 'down')}
+                      disabled={media.indexOf(item) === media.length - 1}
+                      className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-50"
+                      title="Move down"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      onClick={() => handleDeleteMedia(item.id)}
+                      className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded hover:bg-red-200"
+                      title="Delete"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Documents Section */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Documents</h2>
+          <button
+            onClick={() => {
+              if (storageEnabled === false) return
+              setShowDocumentForm(!showDocumentForm)
+            }}
+            disabled={storageLoading || storageEnabled === false}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            title={storageEnabled === false ? "Storage not configured (S3/R2). Configure env vars to enable uploads." : undefined}
+          >
+            {showDocumentForm ? "Cancel" : "Add Document"}
+          </button>
+        </div>
+
+        {storageLoading && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+            <div className="text-sm text-gray-600">Checking storage configuration...</div>
+          </div>
+        )}
+
+        {storageError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium mb-1">⚠️ Storage check failed</div>
+            <div className="text-sm text-red-700">{storageError}</div>
+          </div>
+        )}
+
+        {storageEnabled === false && !storageLoading && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+            <div className="text-yellow-800 font-medium mb-1">⚠️ Storage not configured</div>
+            <div className="text-sm text-yellow-700">
+              Document uploads require S3/R2 storage configuration. Set S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY environment variables.
+              See docs/STORAGE_R2_SETUP.md for setup instructions.
+            </div>
+          </div>
+        )}
+
+        {documentsError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium">{documentsError}</div>
+            {documentsTraceId && (
+              <div className="text-xs text-red-600 font-mono mt-1">Trace ID: {documentsTraceId}</div>
+            )}
+          </div>
+        )}
+
+        {showDocumentForm && (
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Document Name</label>
+                <input
+                  type="text"
+                  value={documentForm.name}
+                  onChange={(e) => setDocumentForm({ ...documentForm, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  placeholder="e.g., Investment Memo Q1 2024"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kind</label>
+                <select
+                  value={documentForm.kind}
+                  onChange={(e) => setDocumentForm({ ...documentForm, kind: e.target.value as any })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="BROCHURE">BROCHURE</option>
+                  <option value="MEMO">MEMO</option>
+                  <option value="PROJECTIONS">PROJECTIONS</option>
+                  <option value="VALUATION">VALUATION</option>
+                  <option value="OTHER">OTHER</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">File</label>
+                <input
+                  ref={documentFileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xlsx"
+                  onChange={(e) => setDocumentForm({ ...documentForm, file: e.target.files?.[0] || null })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <button
+                onClick={handleDocumentUpload}
+                disabled={uploadingDocument || !documentForm.name || !documentForm.file}
+                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 text-sm"
+              >
+                {uploadingDocument ? "Uploading..." : "Upload Document"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {documentsLoading ? (
+          <div className="text-center py-8 text-gray-500">Loading documents...</div>
+        ) : documents.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">No documents uploaded yet</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Kind</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {documents.map((doc) => (
+                  <tr key={doc.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{doc.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{doc.kind}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{formatFileSize(doc.size_bytes)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDateTime(doc.created_at)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                      {doc.url && (
+                        <a
+                          href={doc.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:underline mr-3"
+                        >
+                          Download
+                        </a>
+                      )}
+                      <button
+                        onClick={() => handleDeleteDocument(doc.id)}
+                        className="text-red-600 hover:text-red-800"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Marketing V1.1 Section */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Marketing (V1.1)</h2>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSeedMarketingDefaults}
+              className="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 text-sm"
+            >
+              Seed Defaults
+            </button>
+            <button
+              onClick={handleSaveMarketing}
+              disabled={savingMarketing}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+            >
+              {savingMarketing ? "Saving..." : "Save Marketing"}
+            </button>
+          </div>
+        </div>
+
+        {marketingSuccess && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+            <div className="text-green-800 font-medium">Marketing saved successfully!</div>
+          </div>
+        )}
+
+        {marketingError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium mb-2">Marketing Save Failed</div>
+            <div className="text-red-700 text-sm whitespace-pre-line">{marketingError}</div>
+            {marketingTraceId && (
+              <div className="mt-2 text-xs text-red-600 font-mono">
+                Trace ID: {marketingTraceId}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-6">
+          {/* Basic Fields */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Marketing Title</label>
+              <input
+                type="text"
+                value={marketingForm.marketing_title || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, marketing_title: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                maxLength={255}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Marketing Subtitle</label>
+              <input
+                type="text"
+                value={marketingForm.marketing_subtitle || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, marketing_subtitle: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                maxLength={500}
+              />
+            </div>
+          </div>
+
+          {/* Location */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Location Label</label>
+              <input
+                type="text"
+                value={marketingForm.location_label || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, location_label: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                maxLength={255}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Latitude</label>
+              <input
+                type="number"
+                step="any"
+                value={marketingForm.location_lat || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, location_lat: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Longitude</label>
+              <input
+                type="number"
+                step="any"
+                value={marketingForm.location_lng || ""}
+                onChange={(e) => setMarketingForm({ ...marketingForm, location_lng: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+          </div>
+
+          {/* Why Invest */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-medium text-gray-700">Why Invest (max 6)</label>
+              <button
+                onClick={handleAddWhyItem}
+                disabled={(marketingForm.marketing_why || []).length >= 6}
+                className="text-blue-600 hover:text-blue-800 text-sm disabled:opacity-50"
+              >
+                + Add Card
+              </button>
+            </div>
+            <div className="space-y-2">
+              {(marketingForm.marketing_why || []).map((item, idx) => (
+                <div key={idx} className="border border-gray-200 rounded p-3 flex gap-2">
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      placeholder="Title (1-60 chars)"
+                      value={item.title}
+                      onChange={(e) => handleUpdateWhyItem(idx, 'title', e.target.value)}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      maxLength={60}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Body (1-240 chars)"
+                      value={item.body}
+                      onChange={(e) => handleUpdateWhyItem(idx, 'body', e.target.value)}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      maxLength={240}
+                    />
+                  </div>
+                  <button
+                    onClick={() => handleRemoveWhyItem(idx)}
+                    className="text-red-600 hover:text-red-800 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Highlights */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="block text-sm font-medium text-gray-700">Highlights (max 20)</label>
+              <button
+                onClick={handleAddHighlight}
+                disabled={(marketingForm.marketing_highlights || []).length >= 20}
+                className="text-blue-600 hover:text-blue-800 text-sm disabled:opacity-50"
+              >
+                + Add
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(marketingForm.marketing_highlights || []).map((highlight, idx) => (
+                <span
+                  key={idx}
+                  className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm flex items-center gap-2"
+                >
+                  {highlight}
+                  <button
+                    onClick={() => handleRemoveHighlight(idx)}
+                    className="text-blue-600 hover:text-blue-800"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Breakdown */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Investment Breakdown</label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Purchase Cost</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={marketingForm.marketing_breakdown?.purchase_cost || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_breakdown: { ...marketingForm.marketing_breakdown, purchase_cost: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Transaction Cost</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={marketingForm.marketing_breakdown?.transaction_cost || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_breakdown: { ...marketingForm.marketing_breakdown, transaction_cost: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Running Cost</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={marketingForm.marketing_breakdown?.running_cost || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_breakdown: { ...marketingForm.marketing_breakdown, running_cost: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Metrics */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Marketing Metrics</label>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Gross Yield (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={marketingForm.marketing_metrics?.gross_yield || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, gross_yield: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Net Yield (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={marketingForm.marketing_metrics?.net_yield || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, net_yield: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Annualised Return (%)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="100"
+                  value={marketingForm.marketing_metrics?.annualised_return || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, annualised_return: parseFloat(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Investors Count</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={marketingForm.marketing_metrics?.investors_count || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, investors_count: parseInt(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Days Left</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={marketingForm.marketing_metrics?.days_left || ""}
+                  onChange={(e) => setMarketingForm({
+                    ...marketingForm,
+                    marketing_metrics: { ...marketingForm.marketing_metrics, days_left: parseInt(e.target.value) || undefined },
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Project Progress Timeline Section */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Project Progress</h2>
+          <button
+            onClick={() => handleOpenTimelineModal()}
+            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm"
+          >
+            Add Update
+          </button>
+        </div>
+
+        {timelineError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium">{timelineError}</div>
+          </div>
+        )}
+
+        {timelineLoading ? (
+          <div className="text-center py-8 text-gray-500">Loading timeline...</div>
+        ) : timelineEvents.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">No timeline events yet. Click "Add Update" to create one.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Order</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Title</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Linked Article</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {timelineEvents.map((event, index) => (
+                  <tr key={event.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleMoveTimelineEvent(event.id, "up")}
+                          disabled={index === 0}
+                          className="text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                          title="Move up"
+                        >
+                          ▲
+                        </button>
+                        <span className="font-mono">{event.sort_order}</span>
+                        <button
+                          onClick={() => handleMoveTimelineEvent(event.id, "down")}
+                          disabled={index === timelineEvents.length - 1}
+                          className="text-gray-400 hover:text-gray-600 disabled:opacity-30"
+                          title="Move down"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {event.occurred_at ? new Date(event.occurred_at).toLocaleDateString() : "—"}
+                    </td>
+                    <td className="px-4 py-4 text-sm text-gray-900">{event.title}</td>
+                    <td className="px-4 py-4 text-sm text-gray-500">
+                      {event.article ? event.article.title : "None"}
+                    </td>
+                    <td className="px-4 py-4 whitespace-nowrap text-sm">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleOpenTimelineModal(event.id)}
+                          className="text-blue-600 hover:text-blue-800"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTimelineEvent(event.id)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Timeline Modal */}
+      {showTimelineModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-semibold mb-4">
+              {editingEventId ? "Edit Timeline Event" : "Add Timeline Event"}
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+                <input
+                  type="text"
+                  value={timelineForm.title}
+                  onChange={(e) => setTimelineForm({ ...timelineForm, title: e.target.value })}
+                  maxLength={120}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  placeholder="Event title (max 120 chars)"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Description * ({280 - timelineForm.description.length} chars remaining)
+                </label>
+                <textarea
+                  value={timelineForm.description}
+                  onChange={(e) => {
+                    if (e.target.value.length <= 280) {
+                      setTimelineForm({ ...timelineForm, description: e.target.value })
+                    }
+                  }}
+                  maxLength={280}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  placeholder="Event description (max 280 chars)"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date (optional)</label>
+                <input
+                  type="datetime-local"
+                  value={timelineForm.occurred_at}
+                  onChange={(e) => setTimelineForm({ ...timelineForm, occurred_at: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Linked Article (optional)</label>
+                <ArticlePicker
+                  selectedArticleId={timelineForm.article_id}
+                  onSelect={(id) => setTimelineForm({ ...timelineForm, article_id: id })}
+                  onClear={() => setTimelineForm({ ...timelineForm, article_id: null })}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={handleCloseTimelineModal}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveTimelineEvent}
+                disabled={savingTimeline || !timelineForm.title.trim() || !timelineForm.description.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 text-sm"
+              >
+                {savingTimeline ? "Saving..." : editingEventId ? "Update" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Investments List */}
+      <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Investments {investmentsTotal > 0 && `(${investmentsTotal})`}</h2>
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700">Filter:</label>
+            <select
+              value={investmentStatusFilter}
+              onChange={(e) => setInvestmentStatusFilter(e.target.value)}
+              className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="ALL">ALL</option>
+              <option value="PENDING">PENDING</option>
+              <option value="CONFIRMED">CONFIRMED</option>
+              <option value="REJECTED">REJECTED</option>
+            </select>
+          </div>
+        </div>
+
+        {investmentsError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+            <div className="text-red-800 font-medium">{investmentsError}</div>
+            {investmentsTraceId && (
+              <div className="text-xs text-red-600 font-mono mt-1">Trace ID: {investmentsTraceId}</div>
+            )}
+          </div>
+        )}
+
+        {investmentsLoading ? (
+          <div className="text-center py-8 text-gray-500">Loading investments...</div>
+        ) : investments.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">No investments found</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Requested</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Allocated</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date/Time</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {investments.map((investment) => (
+                  <tr key={investment.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <a 
+                        href={`mailto:${investment.user_email}`}
+                        className="text-blue-600 hover:underline"
+                      >
+                        {investment.user_email}
+                      </a>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-gray-700">
+                      {parseFloat(investment.requested_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-mono text-gray-700">
+                      {parseFloat(investment.allocated_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getInvestmentStatusBadge(investment.status)}`}>
+                        {investment.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDateTime(investment.created_at)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </main>
+  )
+}

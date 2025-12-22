@@ -365,3 +365,346 @@ curl -X POST "http://localhost:8000/admin/v1/compliance/deposits/123e4567-e89b-1
 - All actions are fully audited via AuditLog
 - Idempotency is enforced (409 Conflict if action already taken)
 - Transaction status is automatically recomputed after the operation
+
+---
+
+## Offers (Admin)
+
+Investment offer management endpoints for administrators and compliance officers. All endpoints require ADMIN or COMPLIANCE role.
+
+### Create Investment Offer
+
+Create a new investment offer. The offer will be created with status DRAFT.
+
+**Endpoint**: `POST /admin/v1/offers`
+
+**Headers**:
+```
+Authorization: Bearer <admin_token>
+```
+
+**Request Body**:
+```json
+{
+  "product_code": "EXCL_RE_001",
+  "title": "Exclusive Real Estate Fund Q1 2025",
+  "description": "Premium real estate investment opportunity",
+  "currency": "AED",
+  "total_capacity": "1000000.00",
+  "min_ticket": "10000.00",
+  "max_ticket": "100000.00",
+  "maturity_date": "2026-12-31T23:59:59Z",
+  "metadata": {
+    "sector": "real_estate",
+    "region": "UAE"
+  }
+}
+```
+
+**Response** (201 Created):
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "product_code": "EXCL_RE_001",
+  "title": "Exclusive Real Estate Fund Q1 2025",
+  "description": "Premium real estate investment opportunity",
+  "currency": "AED",
+  "status": "DRAFT",
+  "total_capacity": "1000000.00",
+  "allocated_amount": "0",
+  "min_ticket": "10000.00",
+  "max_ticket": "100000.00",
+  "maturity_date": "2026-12-31T23:59:59Z",
+  "metadata": {
+    "sector": "real_estate",
+    "region": "UAE"
+  },
+  "created_at": "2025-12-19T00:00:00Z",
+  "updated_at": null
+}
+```
+
+**Error Codes**:
+- `409 OFFER_PRODUCT_CODE_EXISTS`: Product code already exists
+- `422 VALIDATION_ERROR`: Invalid request data
+- `403 FORBIDDEN`: User does not have ADMIN or COMPLIANCE role
+
+**Example**:
+```bash
+curl -X POST http://localhost:8000/admin/v1/offers \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "product_code": "EXCL_RE_001",
+    "title": "Exclusive Real Estate Fund Q1 2025",
+    "description": "Premium real estate investment opportunity",
+    "currency": "AED",
+    "total_capacity": "1000000.00",
+    "min_ticket": "10000.00",
+    "max_ticket": "100000.00"
+  }'
+```
+
+### Update Investment Offer
+
+Update an existing investment offer. Cannot update offers with status CLOSED.
+
+**Endpoint**: `PATCH /admin/v1/offers/{offer_id}`
+
+**Headers**:
+```
+Authorization: Bearer <admin_token>
+```
+
+**Path Parameters**:
+- `offer_id` (required): UUID of the offer to update
+
+**Request Body** (all fields optional):
+```json
+{
+  "title": "Updated Title",
+  "description": "Updated description",
+  "total_capacity": "2000000.00",
+  "min_ticket": "20000.00",
+  "max_ticket": "200000.00",
+  "maturity_date": "2027-12-31T23:59:59Z",
+  "metadata": {
+    "sector": "tech"
+  }
+}
+```
+
+**Response** (200 OK): Same as Create Investment Offer
+
+**Error Codes**:
+- `404 OFFER_NOT_FOUND`: Offer not found
+- `400 OFFER_CLOSED`: Cannot update offer with status CLOSED
+- `400 INVALID_TOTAL_CAPACITY`: total_capacity cannot be less than allocated_amount
+- `403 FORBIDDEN`: User does not have ADMIN or COMPLIANCE role
+
+**Example**:
+```bash
+curl -X PATCH http://localhost:8000/admin/v1/offers/123e4567-e89b-12d3-a456-426614174000 \
+  -H "Authorization: Bearer <admin_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Updated Title",
+    "total_capacity": "2000000.00"
+  }'
+```
+
+### Publish Investment Offer
+
+Publish an offer (change status from DRAFT to OPEN). Only DRAFT offers can be published.
+
+**Endpoint**: `POST /admin/v1/offers/{offer_id}/publish`
+
+**Headers**:
+```
+Authorization: Bearer <admin_token>
+```
+
+**Path Parameters**:
+- `offer_id` (required): UUID of the offer to publish
+
+**Response** (200 OK): Same as Create Investment Offer (status will be OPEN)
+
+**Error Codes**:
+- `404 OFFER_NOT_FOUND`: Offer not found
+- `400 INVALID_STATUS_TRANSITION`: Only DRAFT offers can be published
+- `403 FORBIDDEN`: User does not have ADMIN or COMPLIANCE role
+
+**Example**:
+```bash
+curl -X POST http://localhost:8000/admin/v1/offers/123e4567-e89b-12d3-a456-426614174000/publish \
+  -H "Authorization: Bearer <admin_token>"
+```
+
+### Close Investment Offer
+
+Close an offer (change status from OPEN to CLOSED). Only OPEN offers can be closed.
+
+**Endpoint**: `POST /admin/v1/offers/{offer_id}/close`
+
+**Headers**:
+```
+Authorization: Bearer <admin_token>
+```
+
+**Path Parameters**:
+- `offer_id` (required): UUID of the offer to close
+
+**Response** (200 OK): Same as Create Investment Offer (status will be CLOSED)
+
+**Error Codes**:
+- `404 OFFER_NOT_FOUND`: Offer not found
+- `400 INVALID_STATUS_TRANSITION`: Only OPEN offers can be closed
+- `403 FORBIDDEN`: User does not have ADMIN or COMPLIANCE role
+
+**Example**:
+```bash
+curl -X POST http://localhost:8000/admin/v1/offers/123e4567-e89b-12d3-a456-426614174000/close \
+  -H "Authorization: Bearer <admin_token>"
+```
+
+### List Investment Offers (Admin)
+
+List all investment offers with optional filters. Returns offers with all statuses (DRAFT, OPEN, CLOSED).
+
+**Endpoint**: `GET /admin/v1/offers`
+
+**Headers**:
+```
+Authorization: Bearer <admin_token>
+```
+
+**Query Parameters**:
+- `status` (optional): Filter by status (DRAFT, OPEN, CLOSED)
+- `currency` (optional): Filter by currency code (e.g., "AED")
+- `q` (optional): Search in title and product_code
+- `limit` (optional): Maximum number of results (default: 50, max: 100)
+- `offset` (optional): Number of results to skip (default: 0)
+
+**Response** (200 OK):
+```json
+[
+  {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "product_code": "EXCL_RE_001",
+    "title": "Exclusive Real Estate Fund Q1 2025",
+    "description": "Premium real estate investment opportunity",
+    "currency": "AED",
+    "status": "OPEN",
+    "total_capacity": "1000000.00",
+    "allocated_amount": "500000.00",
+    "min_ticket": "10000.00",
+    "max_ticket": "100000.00",
+    "maturity_date": "2026-12-31T23:59:59Z",
+    "metadata": {
+      "sector": "real_estate"
+    },
+    "created_at": "2025-12-19T00:00:00Z",
+    "updated_at": "2025-12-19T01:00:00Z"
+  }
+]
+```
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/admin/v1/offers?status=OPEN&currency=AED&limit=50&offset=0" \
+  -H "Authorization: Bearer <admin_token>"
+```
+
+### Get Investment Offer (Admin)
+
+Get investment offer details by ID.
+
+**Endpoint**: `GET /admin/v1/offers/{offer_id}`
+
+**Headers**:
+```
+Authorization: Bearer <admin_token>
+```
+
+**Path Parameters**:
+- `offer_id` (required): UUID of the offer
+
+**Response** (200 OK): Same as Create Investment Offer
+
+**Error Codes**:
+- `404 OFFER_NOT_FOUND`: Offer not found
+- `403 FORBIDDEN`: User does not have ADMIN or COMPLIANCE role
+
+**Example**:
+```bash
+curl -X GET http://localhost:8000/admin/v1/offers/123e4567-e89b-12d3-a456-426614174000 \
+  -H "Authorization: Bearer <admin_token>"
+```
+
+---
+
+## Offers (Client)
+
+Public read-only endpoints for investment offers. Regular users can only see OPEN offers. Admin/Compliance users can see all offers.
+
+### List Investment Offers (Public)
+
+List all open investment offers. Returns only offers with status OPEN by default for regular users.
+
+**Endpoint**: `GET /api/v1/offers`
+
+**Headers**:
+```
+Authorization: Bearer <access_token>
+```
+
+**Query Parameters**:
+- `currency` (optional): Filter by currency code (e.g., "AED")
+- `status` (optional): Filter by status (default: OPEN for non-admin users)
+- `limit` (optional): Maximum number of results (default: 50, max: 100)
+- `offset` (optional): Number of results to skip (default: 0)
+
+**Response** (200 OK):
+```json
+[
+  {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "product_code": "EXCL_RE_001",
+    "title": "Exclusive Real Estate Fund Q1 2025",
+    "description": "Premium real estate investment opportunity",
+    "currency": "AED",
+    "status": "OPEN",
+    "total_capacity": "1000000.00",
+    "allocated_amount": "500000.00",
+    "min_ticket": "10000.00",
+    "max_ticket": "100000.00",
+    "maturity_date": "2026-12-31T23:59:59Z",
+    "metadata": {
+      "sector": "real_estate"
+    },
+    "created_at": "2025-12-19T00:00:00Z",
+    "updated_at": "2025-12-19T01:00:00Z"
+  }
+]
+```
+
+**Notes**:
+- Regular users only see OPEN offers
+- Admin/Compliance users can see all offers regardless of status
+- DRAFT and CLOSED offers are hidden from regular users
+
+**Example**:
+```bash
+curl -X GET "http://localhost:8000/api/v1/offers?currency=AED&limit=50&offset=0" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+### Get Investment Offer (Public)
+
+Get investment offer details by ID. Regular users can only access OPEN offers.
+
+**Endpoint**: `GET /api/v1/offers/{offer_id}`
+
+**Headers**:
+```
+Authorization: Bearer <access_token>
+```
+
+**Path Parameters**:
+- `offer_id` (required): UUID of the offer
+
+**Response** (200 OK): Same as Create Investment Offer
+
+**Error Codes**:
+- `404 OFFER_NOT_FOUND`: Offer not found (or not OPEN for regular users)
+- `401 UNAUTHORIZED`: Not authenticated
+
+**Notes**:
+- Regular users can only access OPEN offers
+- Admin/Compliance users can access all offers
+
+**Example**:
+```bash
+curl -X GET http://localhost:8000/api/v1/offers/123e4567-e89b-12d3-a456-426614174000 \
+  -H "Authorization: Bearer <access_token>"
+```

@@ -2,9 +2,10 @@
 FastAPI application entry point
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.infrastructure.settings import get_settings
@@ -31,6 +32,26 @@ setup_logging()
 # Get settings
 settings = get_settings()
 
+# Log storage status at startup
+import logging
+logger = logging.getLogger(__name__)
+if settings.storage_enabled:
+    reason = None
+    bucket_info = settings.S3_BUCKET if settings.S3_BUCKET else "none"
+    endpoint_info = settings.S3_ENDPOINT_URL if settings.S3_ENDPOINT_URL else "none"
+else:
+    reason = settings.get_storage_disabled_reason()
+    bucket_info = "none"
+    endpoint_info = "none"
+
+logger.info(
+    f"STORAGE: {'enabled' if settings.storage_enabled else 'disabled'} "
+    f"provider={settings.STORAGE_PROVIDER} "
+    f"bucket={bucket_info} "
+    f"endpoint={endpoint_info} "
+    f"{'reason=' + reason if reason else ''}"
+)
+
 # Create FastAPI app
 app = FastAPI(
     title="Vancelian Core API",
@@ -41,14 +62,31 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# Add CORS middleware if enabled
+# Add CORS middleware IMMEDIATELY after app creation (before other middlewares and routers)
+# This ensures CORS headers are applied to all routes including webhooks and admin endpoints
+# Configuration comes from settings (CORS_ALLOW_ORIGINS environment variable)
 if settings.CORS_ENABLED:
+    # Get CORS origins from settings (already parsed by validator)
+    cors_origins = settings.cors_allow_origins_list
+    cors_methods = settings.cors_allow_methods_list if settings.cors_allow_methods_list else ["*"]
+    cors_headers = settings.cors_allow_headers_list if settings.cors_allow_headers_list else ["*"]
+    
+    if not cors_origins:
+        # Empty list or not set - log warning but don't crash
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "CORS_ENABLED=True but CORS_ALLOW_ORIGINS is empty or not set. "
+            "CORS will be disabled. Set CORS_ALLOW_ORIGINS environment variable "
+            "(comma-separated, e.g., 'http://localhost:3000,http://localhost:3001')."
+        )
+    
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_allow_origins_list,
-        allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
-        allow_methods=settings.cors_allow_methods_list,
-        allow_headers=settings.cors_allow_headers_list,
+        allow_origins=cors_origins,  # Use parsed list from settings
+        allow_methods=cors_methods,  # Use parsed methods from settings (or ["*"])
+        allow_headers=cors_headers,  # Use parsed headers from settings (or ["*"])
+        allow_credentials=settings.CORS_ALLOW_CREDENTIALS,  # From settings
     )
 
 # Add custom middlewares (order matters - first added is outermost)
@@ -60,6 +98,27 @@ redis_client = get_redis()
 app.add_middleware(RateLimitMiddleware, redis_client=redis_client)
 
 # Register exception handlers
+from app.services.storage.exceptions import StorageNotConfiguredError
+
+async def storage_not_configured_handler(request: Request, exc: StorageNotConfiguredError) -> JSONResponse:
+    """Handle StorageNotConfiguredError - return 412 Precondition Failed"""
+    from app.utils.trace_id import get_trace_id
+    trace_id = get_trace_id(request)
+    
+    error_response = {
+        "error": {
+            "code": exc.code,
+            "message": exc.message,
+            "trace_id": trace_id,
+        }
+    }
+    
+    return JSONResponse(
+        status_code=status.HTTP_412_PRECONDITION_FAILED,  # Precondition Failed (consistent across all endpoints)
+        content=error_response,
+    )
+
+app.add_exception_handler(StorageNotConfiguredError, storage_not_configured_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
