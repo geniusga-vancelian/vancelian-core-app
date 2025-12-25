@@ -1,0 +1,36 @@
+{
+  "collectionName": "components_blocks_features_grids",
+  "info": {
+    "displayName": "features-grid",
+    "description": "Grid of feature cards organized in rows, similar to Revolut steps section"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "subtitle": {
+      "type": "string",
+      "required": false
+    },
+    "cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.cta-link",
+      "required": false
+    },
+    "rows": {
+      "type": "component",
+      "repeatable": true,
+      "component": "atoms.features-row",
+      "required": true,
+      "min": 1
+    },
+    "anchor_id": {
+      "type": "string",
+      "required": false
+    }
+  }
+}
+

@@ -1,0 +1,23 @@
+{
+  "collectionName": "components_atoms_faq_items",
+  "info": {
+    "displayName": "faq-item",
+    "description": "Single FAQ question and answer item"
+  },
+  "options": {},
+  "attributes": {
+    "question": {
+      "type": "string",
+      "required": true
+    },
+    "answer": {
+      "type": "text",
+      "required": true
+    },
+    "is_open_by_default": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}
+

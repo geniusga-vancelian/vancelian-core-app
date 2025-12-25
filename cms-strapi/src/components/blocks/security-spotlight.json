@@ -1,0 +1,196 @@
+{
+  "collectionName": "components_blocks_security_spotlights",
+  "info": {
+    "displayName": "security-spotlight",
+    "description": "Security spotlight section with 3 cards, center card emphasized"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "subtitle": {
+      "type": "string",
+      "required": false
+    },
+    "description": {
+      "type": "text",
+      "required": false
+    },
+    "cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.cta-link",
+      "required": false
+    },
+    "layout": {
+      "type": "enumeration",
+      "enum": [
+        "center-emphasis",
+        "three-equal"
+      ],
+      "default": "center-emphasis",
+      "required": true
+    },
+    "max_width": {
+      "type": "enumeration",
+      "enum": [
+        "narrow",
+        "default",
+        "wide"
+      ],
+      "default": "default",
+      "required": false
+    },
+    "cards": {
+      "type": "component",
+      "repeatable": true,
+      "component": "atoms.feature-card",
+      "required": true,
+      "min": 3
+    },
+    "responsive_mode": {
+      "type": "enumeration",
+      "enum": [
+        "carousel",
+        "static"
+      ],
+      "default": "carousel",
+      "required": false
+    },
+    "desktop_layout": {
+      "type": "enumeration",
+      "enum": [
+        "three-center-emphasis",
+        "three-equal"
+      ],
+      "default": "three-center-emphasis",
+      "required": false
+    },
+    "show_dots": {
+      "type": "boolean",
+      "required": false,
+      "default": true
+    },
+    "infinite": {
+      "type": "boolean",
+      "required": false,
+      "default": true
+    },
+    "start_position": {
+      "type": "enumeration",
+      "enum": [
+        "left",
+        "center"
+      ],
+      "default": "center",
+      "required": false
+    },
+    "overlay_mode": {
+      "type": "enumeration",
+      "enum": [
+        "auto",
+        "always",
+        "never"
+      ],
+      "default": "auto",
+      "required": false
+    },
+    "overlay_style": {
+      "type": "enumeration",
+      "enum": [
+        "dark-gradient",
+        "dark-solid",
+        "none"
+      ],
+      "default": "dark-gradient",
+      "required": false
+    },
+    "content_mode": {
+      "type": "enumeration",
+      "enum": [
+        "overlay",
+        "side-panel"
+      ],
+      "default": "overlay",
+      "required": false
+    },
+    "panel_layout": {
+      "type": "enumeration",
+      "enum": [
+        "content-left",
+        "content-right"
+      ],
+      "default": "content-left",
+      "required": false
+    },
+    "panel_align": {
+      "type": "enumeration",
+      "enum": [
+        "top",
+        "center"
+      ],
+      "default": "center",
+      "required": false
+    },
+    "panel_width": {
+      "type": "enumeration",
+      "enum": [
+        "sm",
+        "md",
+        "lg"
+      ],
+      "default": "md",
+      "required": false
+    },
+    "sidepanel_use_slide_content": {
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "sidepanel_fallback": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.section-copy",
+      "required": false
+    },
+    "sidepanel_cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.cta-link",
+      "required": false
+    },
+    "sidepanel_show_dots": {
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "disable_overlay_in_sidepanel": {
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "image_fit": {
+      "type": "enumeration",
+      "enum": [
+        "contain",
+        "cover"
+      ],
+      "default": "contain",
+      "required": false
+    },
+    "emphasis_index": {
+      "type": "integer",
+      "required": false,
+      "default": 1,
+      "min": 0,
+      "max": 2
+    },
+    "anchor_id": {
+      "type": "string",
+      "required": false
+    }
+  }
+}
+

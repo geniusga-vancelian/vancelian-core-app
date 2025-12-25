@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+dist/
+build/
+.strapi-updater.json
+.strapi-cloud.json
+database/
+public/uploads/
+*.log
+.DS_Store

@@ -1,0 +1,94 @@
+{
+  "collectionName": "components_atoms_feature_cards",
+  "info": {
+    "displayName": "feature-card",
+    "description": "Feature card with bullet (number or icon), title, text, optional image and CTA"
+  },
+  "options": {},
+  "attributes": {
+    "eyebrow": {
+      "type": "string",
+      "required": false
+    },
+    "title": {
+      "type": "string",
+      "required": false
+    },
+    "text": {
+      "type": "text",
+      "required": false
+    },
+    "bullet_type": {
+      "type": "enumeration",
+      "enum": [
+        "number",
+        "icon"
+      ],
+      "default": "icon",
+      "required": true
+    },
+    "bullet_value": {
+      "type": "string",
+      "required": false
+    },
+    "icon": {
+      "type": "enumeration",
+      "enum": [
+        "coins",
+        "globe",
+        "plus",
+        "arrow-right",
+        "shield",
+        "sparkles",
+        "wallet",
+        "chart",
+        "link",
+        "help-circle",
+        "bar-chart-3"
+      ],
+      "required": false
+    },
+    "number": {
+      "type": "integer",
+      "required": false,
+      "min": 1
+    },
+    "card_theme": {
+      "type": "enumeration",
+      "enum": [
+        "light",
+        "muted",
+        "dark"
+      ],
+      "default": "muted",
+      "required": false
+    },
+    "accent": {
+      "type": "enumeration",
+      "enum": [
+        "none",
+        "brand",
+        "success",
+        "warning",
+        "info"
+      ],
+      "default": "brand",
+      "required": false
+    },
+    "image": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.cta-link",
+      "required": false
+    }
+  }
+}
+

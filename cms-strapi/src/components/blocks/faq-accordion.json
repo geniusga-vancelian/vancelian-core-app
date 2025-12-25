@@ -1,0 +1,26 @@
+{
+  "collectionName": "components_blocks_faq_accordions",
+  "info": {
+    "displayName": "faq-accordion",
+    "description": "FAQ section with accordion items"
+  },
+  "options": {},
+  "attributes": {
+    "eyebrow": {
+      "type": "string",
+      "required": false
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "items": {
+      "type": "component",
+      "repeatable": true,
+      "component": "atoms.faq-item",
+      "required": true,
+      "min": 1
+    }
+  }
+}
+

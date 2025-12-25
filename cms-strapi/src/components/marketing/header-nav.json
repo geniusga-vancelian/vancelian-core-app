@@ -1,0 +1,70 @@
+{
+  "collectionName": "components_marketing_header_navs",
+  "info": {
+    "displayName": "header-nav",
+    "description": ""
+  },
+  "options": {},
+  "attributes": {
+    "logo_text": {
+      "type": "string"
+    },
+    "logo_href": {
+      "type": "string",
+      "default": "/p/home"
+    },
+    "logo": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
+    },
+    "transparent_on_top": {
+      "type": "boolean",
+      "default": false
+    },
+    "theme": {
+      "type": "enumeration",
+      "enum": [
+        "light",
+        "dark"
+      ],
+      "default": "light"
+    },
+    "sticky": {
+      "type": "boolean",
+      "default": true
+    },
+    "links": {
+      "type": "component",
+      "repeatable": true,
+      "component": "marketing.link"
+    },
+    "primary_cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "marketing.link"
+    },
+    "cta_label": {
+      "type": "string"
+    },
+    "cta_href": {
+      "type": "string"
+    },
+    "cta_variant": {
+      "type": "enumeration",
+      "enum": [
+        "primary",
+        "secondary"
+      ],
+      "default": "primary"
+    }
+  }
+}
+
+

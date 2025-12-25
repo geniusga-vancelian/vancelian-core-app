@@ -1,0 +1,30 @@
+{
+  "collectionName": "components_blocks_cards_rows",
+  "info": {
+    "displayName": "cards-rows",
+    "description": "Section with multiple rows of hero cards"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": false
+    },
+    "subtitle": {
+      "type": "string",
+      "required": false
+    },
+    "rows": {
+      "type": "component",
+      "repeatable": true,
+      "component": "atoms.cards-row",
+      "required": true,
+      "min": 1
+    },
+    "anchor_id": {
+      "type": "string",
+      "required": false
+    }
+  }
+}
+

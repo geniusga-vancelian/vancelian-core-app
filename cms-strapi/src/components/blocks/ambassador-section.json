@@ -1,0 +1,81 @@
+{
+  "collectionName": "components_blocks_ambassador_sections",
+  "info": {
+    "displayName": "ambassador-section",
+    "description": "Ambassador/partnership section with card and CTA"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "subtitle": {
+      "type": "string",
+      "required": true
+    },
+    "card_title": {
+      "type": "string",
+      "required": true
+    },
+    "card_text": {
+      "type": "text",
+      "required": true
+    },
+    "cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.cta-link",
+      "required": true
+    },
+    "background_image": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "overlay_opacity": {
+      "type": "integer",
+      "required": false,
+      "default": 35,
+      "min": 0,
+      "max": 85
+    },
+    "card_height": {
+      "type": "enumeration",
+      "enum": [
+        "md",
+        "lg",
+        "xl"
+      ],
+      "default": "lg",
+      "required": false
+    },
+    "content_max_width": {
+      "type": "enumeration",
+      "enum": [
+        "sm",
+        "md",
+        "lg"
+      ],
+      "default": "md",
+      "required": false
+    },
+    "align": {
+      "type": "enumeration",
+      "enum": [
+        "left",
+        "center"
+      ],
+      "default": "left",
+      "required": false
+    },
+    "anchor_id": {
+      "type": "string",
+      "required": false
+    }
+  }
+}
+

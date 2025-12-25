@@ -10,6 +10,8 @@ This document lists all environment variables used across the Vancelian applicat
 |----------|----------|---------------|-------------|
 | `NEXT_PUBLIC_API_BASE_URL` | **Yes** (Prod) | `http://localhost:8000` (Dev only) | Base URL for API requests |
 | `NEXT_PUBLIC_ADMIN_API_BASE_URL` | No | Falls back to `NEXT_PUBLIC_API_BASE_URL` | Admin-specific API base URL (optional override) |
+| `NEXT_PUBLIC_STRAPI_URL` | No | `http://localhost:1337` (Dev only) | Strapi CMS base URL for content |
+| `STRAPI_URL` | No | `http://localhost:1337` (Dev only) | Strapi CMS base URL (server-side) |
 
 **Note:** In production, `NEXT_PUBLIC_API_BASE_URL` MUST be set. The fallback to `localhost:8000` only works in development and will show a console warning.
 
@@ -172,6 +174,15 @@ The `docker-compose.dev.yml` file sets default values for development. These can
 - `S3_SECRET_ACCESS_KEY`
 - `S3_ENDPOINT_URL` (for R2)
 - `S3_REGION`
+
+**Strapi CMS:**
+- `STRAPI_DATABASE_URL` - PostgreSQL connection string for CMS database
+- `STRAPI_APP_KEYS` - 4 comma-separated app keys (32+ chars each)
+- `STRAPI_API_TOKEN_SALT` - API token salt (32+ chars)
+- `STRAPI_ADMIN_JWT_SECRET` - Admin JWT secret (32+ chars)
+- `STRAPI_JWT_SECRET` - API JWT secret (32+ chars)
+- `STRAPI_TRANSFER_TOKEN_SALT` - Transfer token salt (32+ chars)
+- `STRAPI_S3_*` - Storage configuration (if using S3/R2 for media)
 
 ### Validation
 

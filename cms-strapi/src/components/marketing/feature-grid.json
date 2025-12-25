@@ -1,0 +1,23 @@
+{
+  "collectionName": "components_marketing_feature_grids",
+  "info": {
+    "displayName": "feature-grid",
+    "description": ""
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string"
+    },
+    "features": {
+      "type": "component",
+      "repeatable": true,
+      "component": "marketing.feature-item"
+    },
+    "items": {
+      "type": "component",
+      "repeatable": true,
+      "component": "marketing.feature-item"
+    }
+  }
+}

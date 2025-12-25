@@ -1,0 +1,46 @@
+{
+  "collectionName": "components_atoms_partner_logos",
+  "info": {
+    "displayName": "partner-logo",
+    "description": "Single partner logo with metadata"
+  },
+  "options": {},
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true
+    },
+    "type": {
+      "type": "enumeration",
+      "enum": [
+        "media",
+        "financial",
+        "technology"
+      ],
+      "default": "technology",
+      "required": true
+    },
+    "logo": {
+      "type": "media",
+      "multiple": false,
+      "required": true,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "url": {
+      "type": "string",
+      "required": false
+    },
+    "order": {
+      "type": "integer",
+      "required": false
+    },
+    "is_featured": {
+      "type": "boolean",
+      "default": false,
+      "required": false
+    }
+  }
+}
+

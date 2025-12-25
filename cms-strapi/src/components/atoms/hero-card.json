@@ -1,0 +1,53 @@
+{
+  "collectionName": "components_atoms_hero_cards",
+  "info": {
+    "displayName": "hero-card",
+    "description": "Hero card with background image, overlay, text, and optional CTA"
+  },
+  "options": {},
+  "attributes": {
+    "eyebrow": {
+      "type": "string",
+      "required": false
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text",
+      "required": true
+    },
+    "background_image": {
+      "type": "media",
+      "multiple": false,
+      "required": true,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "text_position": {
+      "type": "enumeration",
+      "enum": [
+        "top-left",
+        "center-left",
+        "bottom-left",
+        "top-center",
+        "center-center",
+        "bottom-center",
+        "top-right",
+        "center-right",
+        "bottom-right"
+      ],
+      "default": "center-left",
+      "required": true
+    },
+    "cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.cta-link",
+      "required": false
+    }
+  }
+}
+

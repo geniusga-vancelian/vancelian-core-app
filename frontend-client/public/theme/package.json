@@ -1,0 +1,16 @@
+{
+  "name": "sandbox",
+  "version": "2.0.0",
+  "description": "Sandbox - Modern & Multipurpose Tailwind CSS Template",
+  "main": "index.js",
+  "scripts": {
+    "build": "npx @tailwindcss/cli -i ./src/input.css -o ./dist/style.css --watch"
+  },
+  "keywords": [],
+  "author": "ib-theme",
+  "license": "ISC",
+  "dependencies": {
+    "@tailwindcss/cli": "^4.0.3",
+    "tailwindcss": "^4.0.3"
+  }
+}

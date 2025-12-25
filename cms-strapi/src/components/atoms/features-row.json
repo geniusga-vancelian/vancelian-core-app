@@ -1,0 +1,29 @@
+{
+  "collectionName": "components_atoms_features_rows",
+  "info": {
+    "displayName": "features-row",
+    "description": "A row of feature cards with column configuration"
+  },
+  "options": {},
+  "attributes": {
+    "columns": {
+      "type": "enumeration",
+      "enum": [
+        "two",
+        "three",
+        "four"
+      ],
+      "default": "three",
+      "required": true
+    },
+    "cards": {
+      "type": "component",
+      "repeatable": true,
+      "component": "atoms.feature-card",
+      "required": true,
+      "min": 2,
+      "max": 4
+    }
+  }
+}
+

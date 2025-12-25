@@ -1,0 +1,60 @@
+{
+  "collectionName": "components_blocks_feature_splits",
+  "info": {
+    "displayName": "feature-split",
+    "description": "Split section with text and image (image left or right)"
+  },
+  "options": {},
+  "attributes": {
+    "eyebrow": {
+      "type": "string",
+      "required": false
+    },
+    "eyebrow_variant": {
+      "type": "enumeration",
+      "enum": [
+        "neutral",
+        "green",
+        "purple"
+      ],
+      "default": "neutral",
+      "required": false
+    },
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "description": {
+      "type": "text",
+      "required": true
+    },
+    "media": {
+      "type": "media",
+      "multiple": false,
+      "required": true,
+      "allowedTypes": [
+        "images"
+      ]
+    },
+    "layout": {
+      "type": "enumeration",
+      "enum": [
+        "image_right",
+        "image_left"
+      ],
+      "default": "image_right",
+      "required": true
+    },
+    "cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "atoms.cta-link",
+      "required": false
+    },
+    "anchor_id": {
+      "type": "string",
+      "required": false
+    }
+  }
+}
+

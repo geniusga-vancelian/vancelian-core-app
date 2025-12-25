@@ -1,0 +1,41 @@
+{
+  "collectionName": "components_marketing_marketing_heroes",
+  "info": {
+    "displayName": "hero",
+    "description": ""
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": true
+    },
+    "subtitle": {
+      "type": "string"
+    },
+    "background_image": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": [
+        "images",
+        "files",
+        "videos",
+        "audios"
+      ]
+    },
+    "primary_cta": {
+      "type": "component",
+      "repeatable": true,
+      "component": "marketing.link"
+    },
+    "secondary_cta": {
+      "type": "component",
+      "repeatable": false,
+      "component": "marketing.link"
+    },
+    "description": {
+      "type": "text"
+    }
+  }
+}

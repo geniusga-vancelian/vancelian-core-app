@@ -1,0 +1,20 @@
+{
+  "collectionName": "components_marketing_footer_simples",
+  "info": {
+    "displayName": "footer-simple"
+  },
+  "options": {},
+  "attributes": {
+    "copyright": {
+      "type": "string"
+    },
+    "copyrightText": {
+      "type": "string"
+    },
+    "links": {
+      "type": "component",
+      "repeatable": true,
+      "component": "marketing.link"
+    }
+  }
+}

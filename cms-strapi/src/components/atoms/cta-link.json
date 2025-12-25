@@ -1,0 +1,23 @@
+{
+  "collectionName": "components_atoms_cta_links",
+  "info": {
+    "displayName": "cta-link",
+    "description": "Call-to-action link with label, href, and external flag"
+  },
+  "options": {},
+  "attributes": {
+    "label": {
+      "type": "string",
+      "required": true
+    },
+    "href": {
+      "type": "string",
+      "required": true
+    },
+    "is_external": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}
+

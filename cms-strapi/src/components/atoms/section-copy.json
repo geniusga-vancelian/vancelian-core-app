@@ -1,0 +1,23 @@
+{
+  "collectionName": "components_atoms_section_copies",
+  "info": {
+    "displayName": "section-copy",
+    "description": "Section copy content with eyebrow, title, and text"
+  },
+  "options": {},
+  "attributes": {
+    "eyebrow": {
+      "type": "string",
+      "required": false
+    },
+    "title": {
+      "type": "string",
+      "required": false
+    },
+    "text": {
+      "type": "text",
+      "required": false
+    }
+  }
+}
+

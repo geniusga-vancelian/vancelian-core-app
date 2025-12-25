@@ -1,0 +1,64 @@
+{
+  "collectionName": "components_blocks_partners_strips",
+  "info": {
+    "displayName": "partners-strip",
+    "description": "Partners / Logos strip block"
+  },
+  "options": {},
+  "attributes": {
+    "title": {
+      "type": "string",
+      "required": false
+    },
+    "subtitle": {
+      "type": "string",
+      "required": false
+    },
+    "partner_kind": {
+      "type": "enumeration",
+      "enum": [
+        "all",
+        "media",
+        "financial",
+        "technology"
+      ],
+      "default": "all",
+      "required": false
+    },
+    "layout": {
+      "type": "enumeration",
+      "enum": [
+        "grid",
+        "carousel"
+      ],
+      "default": "grid",
+      "required": false
+    },
+    "theme": {
+      "type": "enumeration",
+      "enum": [
+        "light",
+        "dark"
+      ],
+      "default": "light",
+      "required": false
+    },
+    "show_names": {
+      "type": "boolean",
+      "default": false,
+      "required": false
+    },
+    "grayscale": {
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "logos": {
+      "type": "component",
+      "repeatable": true,
+      "required": true,
+      "component": "atoms.partner-logo"
+    }
+  }
+}
+

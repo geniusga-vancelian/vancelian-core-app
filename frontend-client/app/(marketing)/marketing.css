@@ -1,0 +1,77 @@
+/**
+ * Marketing CSS - Minimal custom styles for marketing blocks
+ * Tailwind CSS only - no external theme dependencies
+ */
+
+/* Hero section wrapper - minimal padding/margin utility */
+.wrapper {
+  /* No specific styles needed - handled by Tailwind classes */
+}
+
+/* Lead paragraph style */
+.lead {
+  font-size: 1.1rem;
+  line-height: 1.55;
+}
+
+/* Button base styles (minimal - most handled by Tailwind) */
+.btn {
+  display: inline-block;
+  cursor: pointer;
+  border-radius: 0.4rem;
+  border-style: solid;
+  border-width: 2px;
+  border-color: transparent;
+  background-color: transparent;
+  padding: 0.5rem 1.2rem;
+  text-align: center;
+  vertical-align: middle;
+  font-size: 0.8rem;
+  line-height: 1.7;
+  text-decoration: none;
+  transition: all 0.2s ease-in-out;
+}
+
+/* Yellow gradient background for hero */
+.bg-gradient-yellow {
+  background: linear-gradient(180deg, #fff8ee, rgba(255, 255, 255, 0) 100%);
+}
+
+/* Yellow button variant */
+.btn-yellow {
+  color: #fff !important;
+  background-color: #fab758 !important;
+  border-color: #fab758 !important;
+}
+
+.btn-yellow:hover {
+  color: #fff !important;
+  background-color: #fab758 !important;
+  border-color: #fab758 !important;
+}
+
+.btn-yellow:active,
+.btn-yellow:focus {
+  color: #fff !important;
+  background-color: #fab758 !important;
+  border-color: #fab758 !important;
+}
+
+.btn-yellow:disabled {
+  color: #fff !important;
+  background-color: #fab758 !important;
+  border-color: #fab758 !important;
+}
+
+/* Secondary button (outline style) */
+.btn:not(.btn-yellow):not(.btn-primary) {
+  color: #343f52;
+  background-color: transparent;
+  border-color: #343f52;
+}
+
+.btn:not(.btn-yellow):not(.btn-primary):hover {
+  color: #fab758;
+  border-color: #fab758;
+}
+

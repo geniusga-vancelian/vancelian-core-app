@@ -1,0 +1,9 @@
+node_modules
+.env
+.env.local
+.git
+.gitignore
+README.md
+.strapi-updater.json
+.strapi-cloud.json
+public/uploads

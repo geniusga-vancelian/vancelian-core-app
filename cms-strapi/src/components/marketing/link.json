@@ -1,0 +1,31 @@
+{
+  "collectionName": "components_marketing_links",
+  "info": {
+    "displayName": "link",
+    "description": ""
+  },
+  "options": {},
+  "attributes": {
+    "label": {
+      "type": "string",
+      "required": true
+    },
+    "href": {
+      "type": "string",
+      "required": true
+    },
+    "is_external": {
+      "type": "boolean",
+      "default": false
+    },
+    "variant": {
+      "type": "enumeration",
+      "enum": [
+        "primary",
+        "secondary",
+        "ghost"
+      ],
+      "default": "primary"
+    }
+  }
+}
