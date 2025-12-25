@@ -397,6 +397,22 @@ export interface BlocksSecuritySpotlight extends Schema.Component {
   };
 }
 
+export interface LinksMarketingLink extends Schema.Component {
+  collectionName: 'components_links_marketing_links';
+  info: {
+    displayName: 'marketing.link';
+  };
+  attributes: {};
+}
+
+export interface LinksPrimaryCta extends Schema.Component {
+  collectionName: 'components_links_primary_ctas';
+  info: {
+    displayName: 'primary_cta';
+  };
+  attributes: {};
+}
+
 export interface MarketingCta extends Schema.Component {
   collectionName: 'components_marketing_ctas';
   info: {
@@ -559,6 +575,8 @@ declare module '@strapi/types' {
       'blocks.features-grid': BlocksFeaturesGrid;
       'blocks.partners-strip': BlocksPartnersStrip;
       'blocks.security-spotlight': BlocksSecuritySpotlight;
+      'links.marketing-link': LinksMarketingLink;
+      'links.primary-cta': LinksPrimaryCta;
       'marketing.cta': MarketingCta;
       'marketing.feature-grid': MarketingFeatureGrid;
       'marketing.feature-item': MarketingFeatureItem;
