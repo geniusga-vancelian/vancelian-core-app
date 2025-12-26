@@ -36,66 +36,58 @@ class InvestInOfferRequest(BaseModel):
 
 # Media/Documents schemas (defined before OfferResponse to avoid forward reference)
 class MediaItemResponse(BaseModel):
-    """Media item response (for public and admin)"""
+    """Media item response (for public and admin)
+    
+    BACKWARD COMPATIBILITY NOTE:
+    - sort_order, created_at, is_cover are optional for backward compatibility
+    - Old media items may not have these fields in the database
+    - Default values: sort_order=0, created_at=None, is_cover=False
+    - See OFFERS_MEDIA_COMPAT.md for migration plan
+    """
     id: str = Field(..., description="Media UUID")
     type: str = Field(..., description="Media type: 'IMAGE' or 'VIDEO'")
     url: Optional[str] = Field(None, description="Resolved URL (public CDN or presigned)")
     mime_type: str = Field(..., description="MIME type")
     size_bytes: int = Field(..., description="File size in bytes")
-    sort_order: int = Field(..., description="Sort order")
-    is_cover: bool = Field(..., description="Is cover image?")
-    created_at: str = Field(..., description="Creation timestamp (ISO format)")
+    sort_order: int = Field(default=0, description="Sort order (default: 0 for backward compatibility)")
+    is_cover: bool = Field(default=False, description="Is cover image? (default: False for backward compatibility)")
+    created_at: Optional[str] = Field(default=None, description="Creation timestamp (ISO format, optional for backward compatibility)")
     width: Optional[int] = Field(None, description="Width in pixels")
     height: Optional[int] = Field(None, description="Height in pixels")
     duration_seconds: Optional[int] = Field(None, description="Duration in seconds (for videos)")
+    kind: Optional[str] = Field(None, description="Media kind: 'COVER', 'PROMO_VIDEO', or None (for gallery items)")
 
     class Config:
         from_attributes = True
-
-
-class PresignedMediaItemResponse(BaseModel):
-    """Media item with presigned URL for public API"""
-    id: str = Field(..., description="Media UUID")
-    type: str = Field(..., description="Media type: 'IMAGE' or 'VIDEO'")
-    kind: Optional[str] = Field(None, description="Media kind: 'COVER' or 'PROMO_VIDEO' (for gallery items, kind is None)")
-    url: str = Field(..., description="Presigned URL (always generated, never None)")
-    mime_type: str = Field(..., description="MIME type")
-    size_bytes: int = Field(..., description="File size in bytes")
-    width: Optional[int] = Field(None, description="Width in pixels")
-    height: Optional[int] = Field(None, description="Height in pixels")
-    duration_seconds: Optional[int] = Field(None, description="Duration in seconds (for videos)")
-
-
-class PresignedDocumentItemResponse(BaseModel):
-    """Document item with presigned URL for public API"""
-    id: str = Field(..., description="Document UUID")
-    name: str = Field(..., description="Document name")
-    kind: str = Field(..., description="Document kind")
-    url: str = Field(..., description="Presigned URL (always generated, never None)")
-    mime_type: str = Field(..., description="MIME type")
-    size_bytes: int = Field(..., description="File size in bytes")
-
-
-class OfferMediaBlockResponse(BaseModel):
-    """Structured media block for public API responses"""
-    cover: Optional[PresignedMediaItemResponse] = Field(None, description="Cover image with presigned URL")
-    promo_video: Optional[PresignedMediaItemResponse] = Field(None, description="Promo video with presigned URL")
-    gallery: List[PresignedMediaItemResponse] = Field(default_factory=list, description="Gallery images/videos (excluding cover and promo_video)")
-    documents: List[PresignedDocumentItemResponse] = Field(default_factory=list, description="Public documents with presigned URLs")
 
 
 class DocumentItemResponse(BaseModel):
-    """Document item response (for public and admin)"""
+    """Document item response (for public and admin)
+    
+    BACKWARD COMPATIBILITY NOTE:
+    - created_at is optional for backward compatibility
+    - Old documents may not have created_at in the database
+    - Default value: created_at=None
+    - See OFFERS_MEDIA_COMPAT.md for migration plan
+    """
     id: str = Field(..., description="Document UUID")
     name: str = Field(..., description="Document name")
     kind: str = Field(..., description="Document kind")
     url: Optional[str] = Field(None, description="Resolved URL (public CDN or presigned)")
     mime_type: str = Field(..., description="MIME type")
     size_bytes: int = Field(..., description="File size in bytes")
-    created_at: str = Field(..., description="Creation timestamp (ISO format)")
+    created_at: Optional[str] = Field(default=None, description="Creation timestamp (ISO format, optional for backward compatibility)")
 
     class Config:
         from_attributes = True
+
+
+class OfferMediaBlockResponse(BaseModel):
+    """Structured media block response with presigned URLs"""
+    cover: Optional[MediaItemResponse] = Field(None, description="Cover image (if exists and PUBLIC)")
+    promo_video: Optional[MediaItemResponse] = Field(None, description="Promo video (if exists and PUBLIC)")
+    gallery: List[MediaItemResponse] = Field(default=[], description="Gallery items (other PUBLIC media, excluding cover and promo_video)")
+    documents: List[DocumentItemResponse] = Field(default=[], description="Public documents")
 
 
 # Response schemas
@@ -113,7 +105,8 @@ class OfferResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Arbitrary metadata (JSONB)")
     created_at: str = Field(..., description="Creation timestamp (ISO format)")
     updated_at: Optional[str] = Field(None, description="Last update timestamp (ISO format)")
-    media: Optional[OfferMediaBlockResponse] = Field(None, description="Structured media block with presigned URLs (cover, promo_video, gallery, documents)")
+    media: Optional[List[MediaItemResponse]] = Field(default=[], description="Public media items (PUBLIC visibility only)")
+    documents: Optional[List[DocumentItemResponse]] = Field(default=[], description="Public documents (PUBLIC visibility only)")
     
     # Marketing V1.1 fields
     cover_media_id: Optional[str] = Field(None, description="Cover image media ID")

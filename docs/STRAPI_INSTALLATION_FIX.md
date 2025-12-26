@@ -70,3 +70,4 @@ Si le build continue d'échouer, on peut :
 C'est plus sûr car `create-strapi-app` génère un package.json qui fonctionne.
 
 
+

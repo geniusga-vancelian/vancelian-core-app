@@ -13,6 +13,9 @@ from app.api.v1.articles import router as articles_router
 from app.api.v1.partners import router as partners_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.me import router as me_router
+from app.api.v1.webhooks import router as webhooks_sim_router
+from app.api.v1.vaults import router as vaults_router
+from app.api.v1.dev import router as dev_router
 
 settings = get_settings()
 router = APIRouter(prefix=settings.API_V1_PREFIX, tags=["api-v1"])
@@ -39,4 +42,6 @@ router.include_router(offers_router)
 router.include_router(offers_media_router)
 router.include_router(articles_router)
 router.include_router(partners_router)
-
+router.include_router(webhooks_sim_router)
+router.include_router(vaults_router)
+router.include_router(dev_router)  # DEV endpoints (gated by settings.debug)

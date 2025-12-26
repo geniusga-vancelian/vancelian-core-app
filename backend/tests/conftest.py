@@ -16,7 +16,9 @@ os.environ["ENV"] = "test"
 # Use 'postgres' service name when running in Docker, 'localhost' when running locally
 db_host = os.getenv("TEST_DB_HOST", "postgres")  # Default to 'postgres' for Docker
 os.environ["DATABASE_URL"] = f"postgresql://vancelian:vancelian_password@{db_host}:5432/vancelian_core_test"
-os.environ["REDIS_URL"] = "redis://localhost:6379/1"  # Use DB 1 for tests
+# Use 'redis' service name when running in Docker, 'localhost' when running locally
+redis_host = os.getenv("TEST_REDIS_HOST", "redis")  # Default to 'redis' for Docker
+os.environ["REDIS_URL"] = f"redis://{redis_host}:6379/1"  # Use DB 1 for tests
 os.environ["SECRET_KEY"] = "test-secret-key-min-32-chars-for-testing-only"
 os.environ["LOG_LEVEL"] = "DEBUG"
 
@@ -98,36 +100,50 @@ def client(db_session: Session, redis_client: Redis):
     import os
     os.environ["ZAND_WEBHOOK_SECRET"] = "test-webhook-secret-for-testing-only"
     
-    # Patch webhook security verification to accept test signatures
-    import app.utils.webhook_security as webhook_security_module
-    original_verify = webhook_security_module.verify_zand_webhook_security
-    
-    def mock_verify_webhook_security(payload_body, signature_header, timestamp_header=None):
-        # In tests, compute signature with test secret and compare
-        import hmac
-        import hashlib
-        secret = os.environ.get("ZAND_WEBHOOK_SECRET", "")
-        if secret and signature_header:
-            # Compute expected signature
-            expected = hmac.new(
-                secret.encode('utf-8'),
-                payload_body,
-                hashlib.sha256
-            ).hexdigest()
-            if hmac.compare_digest(expected, signature_header):
-                return True, None
-        # Accept test-signature-placeholder for convenience in tests
-        if signature_header and signature_header.startswith("test-"):
-            return True, None
-        return False, "Invalid signature for tests"
-    
-    webhook_security_module.verify_zand_webhook_security = mock_verify_webhook_security
+    # Patch webhook security verification if the function exists
+    # (Some endpoints may not use webhook security)
+    try:
+        import app.utils.webhook_security as webhook_security_module
+        if hasattr(webhook_security_module, 'verify_zand_webhook_security'):
+            original_verify = webhook_security_module.verify_zand_webhook_security
+            
+            def mock_verify_webhook_security(payload_body, signature_header, timestamp_header=None):
+                # In tests, compute signature with test secret and compare
+                import hmac
+                import hashlib
+                secret = os.environ.get("ZAND_WEBHOOK_SECRET", "")
+                if secret and signature_header:
+                    # Compute expected signature
+                    expected = hmac.new(
+                        secret.encode('utf-8'),
+                        payload_body,
+                        hashlib.sha256
+                    ).hexdigest()
+                    if hmac.compare_digest(expected, signature_header):
+                        return True, None
+                # Accept test-signature-placeholder for convenience in tests
+                if signature_header and signature_header.startswith("test-"):
+                    return True, None
+                return False, "Invalid signature for tests"
+            
+            webhook_security_module.verify_zand_webhook_security = mock_verify_webhook_security
+            webhook_security_original = original_verify
+        else:
+            webhook_security_original = None
+    except ImportError:
+        webhook_security_original = None
     
     yield TestClient(app)
     
     # Clean up
     app.dependency_overrides.clear()
-    webhook_security_module.verify_zand_webhook_security = original_verify
+    # Restore webhook security if it was patched
+    if webhook_security_original is not None:
+        try:
+            import app.utils.webhook_security as webhook_security_module
+            webhook_security_module.verify_zand_webhook_security = webhook_security_original
+        except (ImportError, AttributeError):
+            pass
 
 
 @pytest.fixture

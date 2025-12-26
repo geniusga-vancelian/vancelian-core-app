@@ -298,3 +298,4 @@ Tous doivent retourner `200 OK` avec des données JSON (même si vides).
 - Le lien se fait via `offer_id` (UUID string) - pas de foreign key
 
 
+

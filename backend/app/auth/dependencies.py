@@ -29,7 +29,13 @@ async def get_current_principal(
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing",
+            detail={
+                "error": {
+                    "code": "AUTHORIZATION_MISSING",
+                    "message": "Authorization header missing",
+                    "trace_id": "auth-check",
+                }
+            },
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -85,13 +91,25 @@ async def get_current_principal(
     except pyjwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired",
+            detail={
+                "error": {
+                    "code": "TOKEN_EXPIRED",
+                    "message": "Token expired",
+                    "trace_id": "auth-check",
+                }
+            },
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except pyjwt.InvalidTokenError:
+    except pyjwt.InvalidTokenError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail={
+                "error": {
+                    "code": "INVALID_TOKEN",
+                    "message": f"Invalid token: {str(e)}",
+                    "trace_id": "auth-check",
+                }
+            },
             headers={"WWW-Authenticate": "Bearer"},
         )
 

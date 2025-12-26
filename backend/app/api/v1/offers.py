@@ -2,7 +2,7 @@
 Client API - Offers (read-only listing + invest)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, status as http_status, Query, Request
 from sqlalchemy.orm import Session, selectinload, joinedload
 from uuid import UUID
 from typing import Optional, List
@@ -14,7 +14,7 @@ from app.core.offers.models import Offer, OfferStatus, OfferMedia, OfferDocument
 from datetime import datetime, timezone
 from app.schemas.offers import (
     OfferResponse, InvestInOfferRequest, OfferInvestmentResponse, MediaItemResponse, DocumentItemResponse,
-    OfferMediaBlockResponse, PresignedMediaItemResponse, PresignedDocumentItemResponse
+    OfferMediaBlockResponse
 )
 from app.auth.dependencies import require_user_role
 from app.auth.oidc import Principal
@@ -165,7 +165,7 @@ def build_media_block(offer: Offer, db: Session) -> OfferMediaBlockResponse:
     if cover_media:
         cover_url = generate_presigned_url_for_media(cover_media)
         if cover_url:  # Only include if URL was successfully generated
-            cover_response = PresignedMediaItemResponse(
+            cover_response = MediaItemResponse(
                 id=str(cover_media.id),
                 type=cover_media.type.value,
                 kind="COVER",
@@ -175,6 +175,9 @@ def build_media_block(offer: Offer, db: Session) -> OfferMediaBlockResponse:
                 width=cover_media.width,
                 height=cover_media.height,
                 duration_seconds=cover_media.duration_seconds,
+                sort_order=cover_media.sort_order if cover_media.sort_order is not None else 0,  # Backward compatibility: default to 0
+                is_cover=cover_media.is_cover if hasattr(cover_media, 'is_cover') else False,  # Backward compatibility: default to False
+                created_at=cover_media.created_at.isoformat() if cover_media.created_at else None,  # Backward compatibility: handle None case
             )
     
     # Build promo_video response
@@ -182,7 +185,7 @@ def build_media_block(offer: Offer, db: Session) -> OfferMediaBlockResponse:
     if promo_video_media:
         promo_url = generate_presigned_url_for_media(promo_video_media)
         if promo_url:  # Only include if URL was successfully generated
-            promo_video_response = PresignedMediaItemResponse(
+            promo_video_response = MediaItemResponse(
                 id=str(promo_video_media.id),
                 type=promo_video_media.type.value,
                 kind="PROMO_VIDEO",
@@ -192,14 +195,18 @@ def build_media_block(offer: Offer, db: Session) -> OfferMediaBlockResponse:
                 width=promo_video_media.width,
                 height=promo_video_media.height,
                 duration_seconds=promo_video_media.duration_seconds,
+                sort_order=promo_video_media.sort_order if promo_video_media.sort_order is not None else 0,  # Backward compatibility: default to 0
+                is_cover=promo_video_media.is_cover if hasattr(promo_video_media, 'is_cover') else False,  # Backward compatibility: default to False
+                created_at=promo_video_media.created_at.isoformat() if promo_video_media.created_at else None,  # Backward compatibility: handle None case
             )
     
     # Build gallery responses (excluding cover and promo_video)
+    # Sort gallery media by (sort_order ASC, created_at ASC, id ASC) for stable ordering
     gallery_responses = []
     for media in gallery_media:
         gallery_url = generate_presigned_url_for_media(media)
         if gallery_url:  # Only include if URL was successfully generated
-            gallery_responses.append(PresignedMediaItemResponse(
+            gallery_responses.append(MediaItemResponse(
                 id=str(media.id),
                 type=media.type.value,
                 kind=None,  # Gallery items don't have a kind
@@ -209,7 +216,17 @@ def build_media_block(offer: Offer, db: Session) -> OfferMediaBlockResponse:
                 width=media.width,
                 height=media.height,
                 duration_seconds=media.duration_seconds,
+                sort_order=media.sort_order if media.sort_order is not None else 0,  # Backward compatibility: default to 0
+                is_cover=media.is_cover if hasattr(media, 'is_cover') else False,  # Backward compatibility: default to False
+                created_at=media.created_at.isoformat() if media.created_at else None,  # Backward compatibility: handle None case
             ))
+    
+    # Stable sort: sort_order ASC, created_at ASC (None last), id ASC
+    gallery_responses.sort(key=lambda m: (
+        m.sort_order,
+        m.created_at if m.created_at else "9999-12-31T23:59:59",  # Put None values last
+        m.id
+    ))
     
     # Get PUBLIC documents
     docs = db.query(OfferDocument).filter(
@@ -222,13 +239,14 @@ def build_media_block(offer: Offer, db: Session) -> OfferMediaBlockResponse:
     for doc in docs:
         doc_url = generate_presigned_url_for_document(doc)
         if doc_url:  # Only include if URL was successfully generated
-            document_responses.append(PresignedDocumentItemResponse(
+            document_responses.append(DocumentItemResponse(
                 id=str(doc.id),
                 name=doc.name,
                 kind=doc.kind.value,
                 url=doc_url,
                 mime_type=doc.mime_type,
                 size_bytes=doc.size_bytes,
+                created_at=doc.created_at.isoformat() if doc.created_at else None,  # Backward compatibility: handle None case
             ))
     
     return OfferMediaBlockResponse(
@@ -275,6 +293,15 @@ def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
     elif days_left is not None:
         marketing_metrics = {'days_left': days_left}
     
+    # Convert media_block to flat list for backward compatibility with OfferResponse.media field
+    # The media field expects List[MediaItemResponse], not OfferMediaBlockResponse
+    media_list = []
+    if media_block.cover:
+        media_list.append(media_block.cover)
+    if media_block.promo_video:
+        media_list.append(media_block.promo_video)
+    media_list.extend(media_block.gallery)  # Gallery items are already sorted
+    
     return OfferResponse(
         id=str(offer.id),
         code=offer.code,
@@ -289,7 +316,8 @@ def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
         metadata=offer.offer_metadata,
         created_at=offer.created_at.isoformat(),
         updated_at=offer.updated_at.isoformat() if offer.updated_at else None,
-        media=media_block,  # Structured media block with presigned URLs
+        media=media_list,  # Convert structured block to flat list for backward compatibility
+        documents=media_block.documents,  # Documents list
         # Marketing V1.1 fields
         cover_media_id=str(offer.cover_media_id) if offer.cover_media_id else None,
         promo_video_media_id=str(offer.promo_video_media_id) if offer.promo_video_media_id else None,
@@ -314,27 +342,81 @@ def build_offer_response(offer: Offer, db: Session) -> OfferResponse:
     description="List offers with status LIVE. Only LIVE offers are visible to regular users. Requires USER role.",
 )
 async def list_offers(
+    status: Optional[str] = Query(None, description="Filter by status (default: LIVE). For backward compatibility, accepts 'LIVE' only."),
     currency: Optional[str] = Query(None, description="Filter by currency (default: AED)"),
     limit: int = Query(default=50, ge=1, le=100, description="Maximum number of results"),
     offset: int = Query(default=0, ge=0, description="Number of results to skip"),
+    http_request: Request = None,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_user_role()),
 ) -> List[OfferResponse]:
-    """List LIVE offers"""
-    query = db.query(Offer).filter(Offer.status == OfferStatus.LIVE)
+    """
+    List LIVE offers.
     
-    if currency:
-        query = query.filter(Offer.currency == currency)
-    else:
-        # Default to AED if no currency specified
-        query = query.filter(Offer.currency == "AED")
+    STATUS MAPPING (backward compatibility):
+    - Frontend may send status=LIVE in query params
+    - Backend always filters for OfferStatus.LIVE (enum value)
+    - If status param is provided and not LIVE, returns 400
+    """
+    trace_id = get_trace_id(http_request) or "unknown"
     
-    # No need to eager load offer_media - we use explicit queries in build_offer_response
-    # This avoids SQLAlchemy relationship ambiguity issues
-    
-    offers = query.order_by(Offer.created_at.desc()).limit(limit).offset(offset).all()
-    
-    return [build_offer_response(offer, db) for offer in offers]
+    try:
+        # Validate status parameter (backward compatibility: accept LIVE only)
+        if status is not None:
+            if status.upper() != "LIVE":
+                raise HTTPException(
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": {
+                            "code": "INVALID_STATUS",
+                            "message": f"Invalid status: '{status}'. Only 'LIVE' status is supported for regular users.",
+                            "trace_id": trace_id,
+                        }
+                    }
+                )
+        
+        # Always filter for LIVE offers (canonical rule: only LIVE offers visible to users)
+        query = db.query(Offer).filter(Offer.status == OfferStatus.LIVE)
+        
+        # Filter by currency
+        if currency:
+            query = query.filter(Offer.currency == currency.upper())
+        else:
+            # Default to AED if no currency specified
+            query = query.filter(Offer.currency == "AED")
+        
+        # No need to eager load offer_media - we use explicit queries in build_offer_response
+        # This avoids SQLAlchemy relationship ambiguity issues
+        
+        offers = query.order_by(Offer.created_at.desc()).limit(limit).offset(offset).all()
+        
+        # Build responses (this may raise exceptions if media/storage issues occur)
+        return [build_offer_response(offer, db) for offer in offers]
+        
+    except HTTPException:
+        # Re-raise HTTPException as-is (already has proper JSON format)
+        raise
+    except Exception as e:
+        # Log full traceback for debugging
+        import traceback
+        error_traceback = traceback.format_exc()
+        logger.exception(
+            f"Unexpected error in list_offers: {type(e).__name__}: {str(e)}",
+            extra={"trace_id": trace_id, "currency": currency, "status": status}
+        )
+        logger.error(f"Full traceback:\n{error_traceback}", extra={"trace_id": trace_id})
+        
+        # Return structured JSON error (never raw stack trace)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": f"Failed to list offers: {type(e).__name__}: {str(e)}",
+                    "trace_id": trace_id,
+                }
+            }
+        )
 
 
 @router.get(
@@ -355,14 +437,14 @@ async def get_offer(
     
     if not offer:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="OFFER_NOT_FOUND"
         )
     
     # Only allow viewing LIVE offers for regular users
     if offer.status != OfferStatus.LIVE:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="OFFER_NOT_FOUND"
         )
     
@@ -372,7 +454,7 @@ async def get_offer(
 @router.post(
     "/offers/{offer_id}/invest",
     response_model=OfferInvestmentResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=http_status.HTTP_201_CREATED,
     summary="Invest in an offer",
     description="Invest in a LIVE offer. Funds are moved from AVAILABLE to LOCKED. Partial fills are supported. Requires USER role.",
 )
@@ -422,49 +504,49 @@ async def invest_in_offer_endpoint(
     except ValidationError as e:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
     except OfferNotFoundError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="OFFER_NOT_FOUND"
         )
     except OfferClosedError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=http_status.HTTP_403_FORBIDDEN,
             detail="OFFER_CLOSED"
         )
     except OfferNotLiveError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=http_status.HTTP_409_CONFLICT,
             detail="OFFER_NOT_LIVE"
         )
     except OfferCurrencyMismatchError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=http_status.HTTP_409_CONFLICT,
             detail="OFFER_CURRENCY_MISMATCH"
         )
     except OfferFullError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=http_status.HTTP_409_CONFLICT,
             detail="OFFER_FULL"
         )
     except InsufficientAvailableFundsError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=http_status.HTTP_409_CONFLICT,
             detail="INSUFFICIENT_AVAILABLE_FUNDS"
         )
     except InsufficientBalanceError:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=http_status.HTTP_409_CONFLICT,
             detail="INSUFFICIENT_AVAILABLE_FUNDS"
         )
     except Exception as e:
@@ -474,7 +556,7 @@ async def invest_in_offer_endpoint(
             extra={"trace_id": trace_id, "offer_id": str(offer_id), "user_id": str(user_id), "error_type": type(e).__name__}
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "error": "INTERNAL_ERROR",
                 "trace_id": trace_id,
@@ -527,7 +609,7 @@ async def get_offer_articles(
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="OFFER_NOT_FOUND"
         )
     
@@ -617,7 +699,7 @@ async def get_offer_timeline(
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="OFFER_NOT_FOUND"
         )
     

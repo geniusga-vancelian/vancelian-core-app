@@ -20,6 +20,7 @@ from app.core.users.models import User, UserStatus
 
 # 3. Account model (depends on User)
 from app.core.accounts.models import Account, AccountType
+from app.core.accounts.wallet_locks import WalletLock, LockReason, ReferenceType, LockStatus
 
 # 4. Transaction model (depends on User)
 from app.core.transactions.models import Transaction, TransactionType, TransactionStatus
@@ -92,5 +93,14 @@ __all__ = [
     "PartnerPortfolioProjectStatus",
     "PartnerPortfolioMedia",
     "partner_offers",
+    "Vault",
+    "VaultAccount",
+    "WithdrawalRequest",
+    "VaultStatus",
+    "WithdrawalRequestStatus",
+    "WalletLock",
+    "LockReason",
+    "ReferenceType",
+    "LockStatus",
 ]
 

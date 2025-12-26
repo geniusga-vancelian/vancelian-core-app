@@ -146,3 +146,5 @@ def downgrade() -> None:
     # Drop enum type
     op.execute("DROP TYPE IF EXISTS article_media_type")
 
+
+

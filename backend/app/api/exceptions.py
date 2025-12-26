@@ -14,13 +14,22 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     """Handle HTTP exceptions"""
     trace_id = get_trace_id(request)
 
-    error_response: Dict[str, Any] = {
-        "error": {
-            "code": f"HTTP_{exc.status_code}",
-            "message": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
-            "trace_id": trace_id,
+    # If detail is already a dict with "error" key, use it directly (preserving custom codes)
+    if isinstance(exc.detail, dict) and "error" in exc.detail:
+        error_response: Dict[str, Any] = exc.detail.copy()
+        # Ensure trace_id is present (use from detail if exists, otherwise use generated one)
+        if "error" in error_response and isinstance(error_response["error"], dict):
+            if "trace_id" not in error_response["error"]:
+                error_response["error"]["trace_id"] = trace_id
+    else:
+        # Default format
+        error_response: Dict[str, Any] = {
+            "error": {
+                "code": f"HTTP_{exc.status_code}",
+                "message": exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+                "trace_id": trace_id,
+            }
         }
-    }
 
     return JSONResponse(
         status_code=exc.status_code,
@@ -32,11 +41,27 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     """Handle validation exceptions"""
     trace_id = get_trace_id(request)
 
+    # Convert non-JSON-serializable objects in error details to strings
+    def convert_non_serializable(obj):
+        """Recursively convert non-JSON-serializable objects to strings"""
+        from decimal import Decimal
+        if isinstance(obj, (Decimal, Exception)):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {key: convert_non_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_non_serializable(item) for item in obj]
+        elif isinstance(obj, (type, type(ValueError))):
+            return str(obj)  # Convert exception classes to strings
+        return obj
+
+    error_details = convert_non_serializable(exc.errors())
+
     error_response: Dict[str, Any] = {
         "error": {
             "code": "VALIDATION_ERROR",
             "message": "Request validation failed",
-            "details": exc.errors(),
+            "details": error_details,
             "trace_id": trace_id,
         }
     }

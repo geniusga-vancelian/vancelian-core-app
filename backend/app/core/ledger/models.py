@@ -17,6 +17,8 @@ class OperationType(str, enum.Enum):
     REVERSAL_DEPOSIT = "REVERSAL_DEPOSIT"  # Reversal of deposit (rejection)
     ADJUSTMENT = "ADJUSTMENT"
     REVERSAL = "REVERSAL"  # Generic reversal
+    VAULT_DEPOSIT = "VAULT_DEPOSIT"  # Deposit into vault
+    VAULT_WITHDRAW_EXECUTED = "VAULT_WITHDRAW_EXECUTED"  # Withdrawal from vault (executed)
 
 
 class OperationStatus(str, enum.Enum):

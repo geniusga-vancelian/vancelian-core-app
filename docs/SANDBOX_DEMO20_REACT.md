@@ -118,3 +118,4 @@ Les composants sont actuellement des stubs avec la structure de base. Pour une i
 - Certaines animations/JS du template peuvent nécessiter des ajustements pour fonctionner avec React
 
 
+

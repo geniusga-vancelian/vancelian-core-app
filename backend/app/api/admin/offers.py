@@ -20,8 +20,26 @@ from app.core.offers.models import OfferMedia
 from app.api.v1.offers import build_offer_response
 from app.auth.dependencies import require_admin_role
 from app.auth.oidc import Principal
+from app.services.system_wallet_helpers import get_offer_system_wallet_balances
+from app.utils.trace_id import get_trace_id
+from fastapi import Request
+from pydantic import BaseModel, Field
+from app.core.accounts.wallet_locks import WalletLock, LockReason, LockStatus
+from sqlalchemy import func
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+class SystemWalletBalanceResponse(BaseModel):
+    """System wallet balance response schema"""
+    scope_type: str = Field(..., description="Scope type (VAULT or OFFER)")
+    scope_id: str = Field(..., description="Scope ID (vault_id or offer_id)")
+    currency: str = Field(..., description="Currency code")
+    available: str = Field(..., description="Available balance")
+    locked: str = Field(..., description="Locked balance")
+    blocked: str = Field(..., description="Blocked balance")
 
 
 @router.post(
@@ -670,3 +688,83 @@ async def set_promo_video(
     db.refresh(offer)
     
     return build_offer_response(offer, db)
+
+
+class SystemWalletInfo(BaseModel):
+    """System wallet balance info"""
+    available: str = Field(..., description="Available balance")
+    locked: str = Field(..., description="Locked balance")
+    blocked: str = Field(..., description="Blocked balance")
+
+
+class OfferPortfolioResponse(BaseModel):
+    """Offer portfolio response - shows system wallet and client liabilities"""
+    offer_id: str = Field(..., description="Offer UUID")
+    currency: str = Field(..., description="Currency code")
+    system_wallet: SystemWalletInfo = Field(..., description="System wallet balances")
+    clients_locked_total: str = Field(..., description="Total amount locked by clients (sum of active wallet_locks)")
+
+
+@router.get(
+    "/offers/{offer_id}/portfolio",
+    response_model=OfferPortfolioResponse,
+    summary="Get offer portfolio view",
+    description="Get system wallet balances and total client liabilities for an offer. Requires ADMIN role.",
+)
+async def get_offer_portfolio(
+    offer_id: UUID,
+    http_request: Request = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_admin_role()),
+) -> OfferPortfolioResponse:
+    """
+    Get offer portfolio view showing:
+    - System wallet balances (available/locked/blocked)
+    - Total client liabilities (sum of active wallet_locks for this offer)
+    """
+    trace_id = get_trace_id(http_request) or "unknown"
+    
+    # Verify offer exists
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": {
+                    "code": "OFFER_NOT_FOUND",
+                    "message": f"Offer {offer_id} not found",
+                    "trace_id": trace_id,
+                }
+            }
+        )
+    
+    # Get system wallet balances
+    system_balances = get_offer_system_wallet_balances(db, offer_id, offer.currency)
+    
+    # Calculate total client liabilities (sum of active wallet_locks)
+    clients_locked_total = db.query(
+        func.coalesce(func.sum(WalletLock.amount), Decimal("0.00"))
+    ).filter(
+        WalletLock.reference_type == "OFFER",
+        WalletLock.reference_id == offer_id,
+        WalletLock.reason == LockReason.OFFER_INVEST.value,
+        WalletLock.status == LockStatus.ACTIVE.value,
+        WalletLock.currency == offer.currency,
+    ).scalar()
+    
+    # Ensure it's a Decimal
+    if clients_locked_total is None:
+        clients_locked_total = Decimal("0.00")
+    else:
+        clients_locked_total = Decimal(str(clients_locked_total))
+    
+    return OfferPortfolioResponse(
+        offer_id=str(offer_id),
+        currency=offer.currency,
+        system_wallet=SystemWalletInfo(
+            available=str(system_balances["available"]),
+            locked=str(system_balances["locked"]),
+            blocked=str(system_balances["blocked"]),
+        ),
+        clients_locked_total=str(clients_locked_total.quantize(Decimal('0.01'))),
+    )

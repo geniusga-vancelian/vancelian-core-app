@@ -27,6 +27,8 @@ if config.config_file_name is not None:
 from app.infrastructure.database import Base
 
 # Import all models through registry to ensure Alembic detects them
+# Note: Import from models registry which includes all models
+import app.models  # This imports all models registered in app/models/__init__.py
 from app.models import (
     User,
     Account,
@@ -36,7 +38,10 @@ from app.models import (
     AuditLog,
     Offer,
     OfferInvestment,
+    WalletLock,
 )
+# Import vault models directly (they may not be in __all__)
+from app.core.vaults.models import Vault, VaultAccount, WithdrawalRequest
 
 target_metadata = Base.metadata
 

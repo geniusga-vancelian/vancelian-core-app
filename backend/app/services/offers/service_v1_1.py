@@ -258,6 +258,29 @@ def invest_in_offer_v1_1(
             intent.operation_id = operation.id
             db.flush()
             
+            # Create wallet_lock record for liability tracking (idempotent)
+            # This is the source of truth for Wallet Matrix OFFER_USER rows
+            from app.core.accounts.wallet_locks import WalletLock, LockReason, ReferenceType, LockStatus
+            existing_lock = db.query(WalletLock).filter(
+                WalletLock.intent_id == intent.id
+            ).first()
+            
+            if not existing_lock:
+                # Idempotency: only create if not exists (prevent double-counting)
+                wallet_lock = WalletLock(
+                    user_id=user_id,
+                    currency=currency,
+                    amount=allocated,
+                    reason=LockReason.OFFER_INVEST.value,
+                    reference_type=ReferenceType.OFFER.value,
+                    reference_id=offer_id,
+                    status=LockStatus.ACTIVE.value,
+                    intent_id=intent.id,  # For idempotency
+                    operation_id=operation.id,
+                )
+                db.add(wallet_lock)
+                db.flush()
+            
             # Update offer.invested_amount atomically (while still holding lock)
             # Use SQL UPDATE to prevent lost updates in concurrent scenarios
             db.execute(

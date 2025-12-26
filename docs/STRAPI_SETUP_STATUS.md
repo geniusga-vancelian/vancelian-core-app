@@ -98,3 +98,4 @@ echo "Ouvrir: http://localhost:3000/offers/$OFFER_ID"
 - Le plugin i18n doit être compatible avec la version Strapi utilisée
 
 
+

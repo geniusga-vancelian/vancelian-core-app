@@ -153,3 +153,4 @@ primaryCtaLabel={section.primaryCtaLabel || primaryCta?.label || undefined}
 3. **Ajouter les composants manquants** : `stats-strip`, `logo-cloud`, `testimonials`, `portfolio-grid` (déjà dans la doc mais pas encore créés)
 
 
+
