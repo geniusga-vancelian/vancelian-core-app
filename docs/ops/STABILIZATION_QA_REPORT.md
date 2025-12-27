@@ -302,8 +302,15 @@ Tous les composants fonctionnent correctement:
 - Transactions affichées correctement
 - Script CLI opérationnel
 - Cron configuré
+- **Fix SQLAlchemy:** `metadata` renommé en `lot_metadata` (colonne DB reste `metadata`)
 
-**Recommandation:** Tag `v0.1-vesting-stable` peut être créé.
+**Tag créé:** ✅ `v0.1-vesting-stable`
+
+**Commits inclus:**
+- `5b4fde3` - fix: close avenir wallet locks on vesting release
+- `282f09f` - docs: add stabilization QA report for AVENIR vesting
+- `09a0942` - docs: update QA report with execution instructions
+- `a6d452d` - fix: rename VestingLot.metadata to lot_metadata to avoid SQLAlchemy conflict
 
 ---
 
