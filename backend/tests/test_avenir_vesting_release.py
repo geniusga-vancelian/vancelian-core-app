@@ -15,6 +15,23 @@ from app.services.vesting_service import release_avenir_vesting_lots
 from app.services.wallet_helpers import ensure_wallet_accounts, get_wallet_balances
 
 
+def debug_dump_lots(db_session):
+    """Helper to debug lot state (test-only)"""
+    lots = db_session.query(VestingLot).all()
+    print(f"\n=== DEBUG: Found {len(lots)} lots ===")
+    for lot in lots:
+        print(f"  Lot {lot.id}: user={lot.user_id}, status={lot.status}, currency={lot.currency}, "
+              f"release_day={lot.release_day}, released_amount={lot.released_amount}, amount={lot.amount}")
+
+
+def debug_dump_query_inputs(as_of_date, currency, vault_code='AVENIR'):
+    """Helper to debug query inputs (test-only)"""
+    print(f"\n=== DEBUG: Query inputs ===")
+    print(f"  as_of_date: {as_of_date} (type: {type(as_of_date)})")
+    print(f"  currency: {currency}")
+    print(f"  vault_code: {vault_code}")
+
+
 def test_release_job_releases_mature_lot(db_session, test_user, avenir_vault):
     """
     Test that release job releases a mature lot:
@@ -63,26 +80,29 @@ def test_release_job_releases_mature_lot(db_session, test_user, avenir_vault):
     db_session.commit()
     
     # Create mature vesting lot
-    deposit_day = date.today() - timedelta(days=366)  # More than 365 days ago
-    release_day = deposit_day + timedelta(days=365)  # Already mature
+    # Ensure release_day is definitely <= as_of_date (use yesterday to be safe)
+    as_of_date = date.today()
+    deposit_day = as_of_date - timedelta(days=366)  # More than 365 days ago
+    release_day = as_of_date - timedelta(days=1)  # Definitely mature (yesterday)
     
     vesting_lot = VestingLot(
         vault_id=avenir_vault.id,
-        vault_code='AVENIR',
+        vault_code='AVENIR',  # Exact match required
         user_id=user_id,
-        currency=currency,
-        deposit_day=deposit_day,
-        release_day=release_day,
-        amount=amount,
-        released_amount=Decimal('0.00'),
-        status=VestingLotStatus.VESTED.value,
+        currency=currency,  # Exact match required
+        deposit_day=deposit_day,  # DATE type
+        release_day=release_day,  # DATE type, must be <= as_of_date
+        amount=amount,  # > 0
+        released_amount=Decimal('0.00'),  # Must be < amount
+        status=VestingLotStatus.VESTED.value,  # Exact status required
         source_operation_id=operation_deposit.id,
     )
     db_session.add(vesting_lot)
-    db_session.commit()
+    db_session.flush()  # Flush to get ID
+    db_session.commit()  # Commit to make visible
     
-    # Refresh to ensure lot is visible in new transaction
-    db_session.refresh(vesting_lot)
+    # Expire all to simulate new transaction (ensure query sees the lot)
+    db_session.expire_all()
     
     # Get balances before release
     balances_before = get_wallet_balances(db_session, user_id, currency)
@@ -90,10 +110,10 @@ def test_release_job_releases_mature_lot(db_session, test_user, avenir_vault):
     locked_before = balances_before['locked_balance']
     
     # Run release
-    # Note: Use the same session to ensure transaction visibility
+    # Use the same as_of_date as used for release_day calculation
     summary = release_avenir_vesting_lots(
         db=db_session,
-        as_of_date=date.today(),
+        as_of_date=as_of_date,  # Use same date as release_day calculation
         currency=currency,
         dry_run=False,
     )
@@ -173,8 +193,9 @@ def test_release_job_idempotent(db_session, test_user, avenir_vault):
     db_session.commit()
     
     # Create mature vesting lot
-    deposit_day = date.today() - timedelta(days=366)
-    release_day = deposit_day + timedelta(days=365)
+    as_of_date = date.today()
+    deposit_day = as_of_date - timedelta(days=366)
+    release_day = as_of_date - timedelta(days=1)  # Definitely mature
     
     vesting_lot = VestingLot(
         vault_id=avenir_vault.id,
@@ -189,12 +210,14 @@ def test_release_job_idempotent(db_session, test_user, avenir_vault):
         source_operation_id=operation_deposit.id,
     )
     db_session.add(vesting_lot)
+    db_session.flush()
     db_session.commit()
+    db_session.expire_all()  # Simulate new transaction
     
     # Run release first time
     summary1 = release_avenir_vesting_lots(
         db=db_session,
-        as_of_date=date.today(),
+        as_of_date=as_of_date,
         currency=currency,
         dry_run=False,
     )
@@ -202,10 +225,18 @@ def test_release_job_idempotent(db_session, test_user, avenir_vault):
     assert summary1['executed_count'] == 1
     assert summary1['executed_amount'] == str(amount)
     
+    # Refresh lot to see updated status
+    db_session.refresh(vesting_lot)
+    assert vesting_lot.status == VestingLotStatus.RELEASED.value
+    assert vesting_lot.released_amount == amount
+    
+    # Expire all to ensure query sees updated status
+    db_session.expire_all()
+    
     # Run release second time (idempotent)
     summary2 = release_avenir_vesting_lots(
         db=db_session,
-        as_of_date=date.today(),
+        as_of_date=as_of_date,
         currency=currency,
         dry_run=False,
     )
@@ -461,8 +492,9 @@ def test_release_missing_lock_does_not_fail(db_session, test_user, avenir_vault)
     db_session.commit()
     
     # Create mature vesting lot
-    deposit_day = date.today() - timedelta(days=366)
-    release_day = deposit_day + timedelta(days=365)
+    as_of_date = date.today()
+    deposit_day = as_of_date - timedelta(days=366)
+    release_day = as_of_date - timedelta(days=1)  # Definitely mature
     
     vesting_lot = VestingLot(
         vault_id=avenir_vault.id,
@@ -477,12 +509,14 @@ def test_release_missing_lock_does_not_fail(db_session, test_user, avenir_vault)
         source_operation_id=operation_deposit.id,
     )
     db_session.add(vesting_lot)
+    db_session.flush()
     db_session.commit()
+    db_session.expire_all()  # Simulate new transaction
     
     # Run release (should succeed even without wallet_lock)
     summary = release_avenir_vesting_lots(
         db=db_session,
-        as_of_date=date.today(),
+        as_of_date=as_of_date,
         currency=currency,
         dry_run=False,
     )
@@ -543,8 +577,9 @@ def test_dry_run_writes_nothing(db_session, test_user, avenir_vault):
     db_session.commit()
     
     # Create mature vesting lot
-    deposit_day = date.today() - timedelta(days=366)
-    release_day = deposit_day + timedelta(days=365)
+    as_of_date = date.today()
+    deposit_day = as_of_date - timedelta(days=366)
+    release_day = as_of_date - timedelta(days=1)  # Definitely mature
     
     vesting_lot = VestingLot(
         vault_id=avenir_vault.id,
@@ -559,7 +594,9 @@ def test_dry_run_writes_nothing(db_session, test_user, avenir_vault):
         source_operation_id=operation_deposit.id,
     )
     db_session.add(vesting_lot)
+    db_session.flush()
     db_session.commit()
+    db_session.expire_all()  # Simulate new transaction
     
     # Count operations and ledger entries before dry_run
     ops_before = db_session.query(Operation).filter(
@@ -577,7 +614,7 @@ def test_dry_run_writes_nothing(db_session, test_user, avenir_vault):
     # Run dry_run
     summary = release_avenir_vesting_lots(
         db=db_session,
-        as_of_date=date.today(),
+        as_of_date=as_of_date,
         currency=currency,
         dry_run=True,
     )
@@ -647,8 +684,9 @@ def test_release_idempotent_two_runs_new_trace_id(db_session, test_user, avenir_
     db_session.commit()
     
     # Create mature vesting lot
-    deposit_day = date.today() - timedelta(days=366)
-    release_day = deposit_day + timedelta(days=365)
+    as_of_date = date.today()
+    deposit_day = as_of_date - timedelta(days=366)
+    release_day = as_of_date - timedelta(days=1)  # Definitely mature
     
     vesting_lot = VestingLot(
         vault_id=avenir_vault.id,
@@ -663,12 +701,14 @@ def test_release_idempotent_two_runs_new_trace_id(db_session, test_user, avenir_
         source_operation_id=operation_deposit.id,
     )
     db_session.add(vesting_lot)
+    db_session.flush()
     db_session.commit()
+    db_session.expire_all()  # Simulate new transaction
     
     # Run release first time (trace_id auto-generated)
     summary1 = release_avenir_vesting_lots(
         db=db_session,
-        as_of_date=date.today(),
+        as_of_date=as_of_date,
         currency=currency,
         dry_run=False,
     )
@@ -676,10 +716,18 @@ def test_release_idempotent_two_runs_new_trace_id(db_session, test_user, avenir_
     assert summary1['executed_count'] == 1
     trace_id_1 = summary1['trace_id']
     
+    # Refresh lot to see updated status
+    db_session.refresh(vesting_lot)
+    assert vesting_lot.status == VestingLotStatus.RELEASED.value
+    assert vesting_lot.released_amount == amount
+    
+    # Expire all to ensure query sees updated status
+    db_session.expire_all()
+    
     # Run release second time with DIFFERENT trace_id
     summary2 = release_avenir_vesting_lots(
         db=db_session,
-        as_of_date=date.today(),
+        as_of_date=as_of_date,
         currency=currency,
         dry_run=False,
         trace_id=str(uuid4()),  # Different trace_id
