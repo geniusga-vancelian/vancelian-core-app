@@ -27,8 +27,42 @@ class VestingReleaseError(VestingError):
     pass
 
 
+def to_utc_day(dt: datetime) -> date:
+    """
+    Convert a timezone-aware datetime to UTC date.
+    
+    Args:
+        dt: Datetime (timezone-aware, preferably UTC)
+    
+    Returns:
+        date: UTC date (normalized to midnight UTC)
+    """
+    if dt.tzinfo is None:
+        # Assume UTC if no timezone info
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).date()
+
+
+def parse_as_of(date_str: str) -> date:
+    """
+    Parse a date string (YYYY-MM-DD) as UTC date.
+    
+    Args:
+        date_str: Date string in ISO format (YYYY-MM-DD)
+    
+    Returns:
+        date: UTC date
+    """
+    return date.fromisoformat(date_str)
+
+
 def normalize_to_utc_midnight(d: date) -> date:
-    """Normalize a date to UTC midnight (already a date, return as-is)"""
+    """
+    Normalize a date to UTC midnight (already a date, return as-is).
+    
+    Note: This function is a no-op since date objects don't have timezone info.
+    The timezone is implicit (UTC) in our system.
+    """
     return d
 
 
@@ -39,7 +73,7 @@ def release_avenir_vesting_lots(
     currency: str = "AED",
     dry_run: bool = False,
     trace_id: Optional[str] = None,
-    max_lots: int = 1000,
+    max_lots: int = 200,  # Reduced default for better concurrency (batching)
 ) -> Dict[str, Any]:
     """
     Release mature AVENIR vesting lots.
@@ -67,10 +101,11 @@ def release_avenir_vesting_lots(
         - trace_id: Trace ID used for this run
         - as_of_date: Date used for maturity check (ISO format)
     """
-    # Normalize date
+    # Normalize date to UTC day
     if as_of_date is None:
         as_of_date = datetime.now(timezone.utc).date()
     else:
+        # Already a date, ensure it's treated as UTC
         as_of_date = normalize_to_utc_midnight(as_of_date)
     
     # Generate trace_id if not provided
@@ -109,8 +144,13 @@ def release_avenir_vesting_lots(
         # Process each lot
         for lot in mature_lots:
             try:
-                # Check idempotence: skip if already processed with this trace_id
-                if lot.release_job_trace_id == trace_id:
+                # Idempotence check: skip if already fully released
+                # (Based on status and released_amount, NOT trace_id)
+                if lot.status == VestingLotStatus.RELEASED.value:
+                    stats['skipped_count'] += 1
+                    continue
+                
+                if lot.released_amount >= lot.amount:
                     stats['skipped_count'] += 1
                     continue
                 
@@ -131,6 +171,12 @@ def release_avenir_vesting_lots(
                     stats['skipped_count'] += 1
                     continue
                 
+                # DRY RUN: Skip all DB writes, just calculate stats
+                if dry_run:
+                    stats['executed_count'] += 1
+                    stats['executed_amount'] += release_amount
+                    continue
+                
                 # Ensure wallet accounts exist
                 wallet_accounts = ensure_wallet_accounts(db, lot.user_id, currency)
                 locked_account_id = wallet_accounts[AccountType.WALLET_LOCKED.value]
@@ -144,7 +190,7 @@ def release_avenir_vesting_lots(
                     stats['errors_count'] += 1
                     continue
                 
-                # Create operation
+                # Create operation (only if not dry_run)
                 operation = Operation(
                     transaction_id=None,
                     type=OperationType.VAULT_VESTING_RELEASE,
@@ -234,11 +280,8 @@ def release_avenir_vesting_lots(
                         )
                         db.add(new_lock)
                 
-                # Commit transaction (or rollback if dry_run)
-                if dry_run:
-                    db.rollback()
-                else:
-                    db.commit()
+                # Commit transaction
+                db.commit()
                 
                 stats['executed_count'] += 1
                 stats['executed_amount'] += release_amount

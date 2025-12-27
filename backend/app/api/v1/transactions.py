@@ -438,6 +438,10 @@ async def get_transactions(
                     except (ValueError, TypeError):
                         pass
                 
+                # For VAULT_VESTING_RELEASE, vault_code should always be 'AVENIR'
+                if op.type == OperationType.VAULT_VESTING_RELEASE:
+                    vault_code = vault_code or 'AVENIR'  # Fallback to AVENIR if missing
+                
                 if vault_code:
                     product_label = f"COFFRE {vault_code}"
                 else:

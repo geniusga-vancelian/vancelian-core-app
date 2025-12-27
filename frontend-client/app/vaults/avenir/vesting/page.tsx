@@ -38,7 +38,12 @@ export default function AvenirVestingTimelinePage() {
   }
 
   const formatDate = (dateStr: string): string => {
+    // Ensure date string is in YYYY-MM-DD format and parse as UTC
     const date = new Date(dateStr + 'T00:00:00Z')
+    // Validate date is valid
+    if (isNaN(date.getTime())) {
+      return dateStr  // Fallback to raw string if invalid
+    }
     return new Intl.DateTimeFormat('fr-FR', {
       year: 'numeric',
       month: 'long',

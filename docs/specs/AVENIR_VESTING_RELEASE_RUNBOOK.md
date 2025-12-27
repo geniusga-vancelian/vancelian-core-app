@@ -107,6 +107,8 @@ curl -X POST "http://localhost:8000/api/v1/admin/vaults/AVENIR/vesting/release?d
 - `executed_amount`: Montant total qui serait libéré
 - `errors_count`: Doit être 0
 
+**Note importante:** `dry_run=true` ne crée **AUCUNE** Operation, LedgerEntry, ou modification de lot. C'est une simulation pure qui calcule uniquement les statistiques.
+
 ### 2. Exécuter le release réel
 
 ```bash
@@ -135,32 +137,41 @@ Les opérations `VAULT_VESTING_RELEASE` doivent apparaître dans:
 
 ## Idempotence
 
-Le système est **idempotent** : exécuter plusieurs fois avec le même `trace_id` ne crée pas de double-comptage.
+Le système est **idempotent** : l'idempotence est basée sur le `status` et `released_amount` du lot, **pas** sur le `trace_id`.
+
+**Règle:** Un lot est skip si:
+- `status == 'RELEASED'` OU
+- `released_amount >= amount`
+
+Le `trace_id` est utilisé uniquement pour l'**observabilité** (traçabilité), pas comme garde-fou comptable.
 
 **Exemple:**
 ```bash
 # Run 1
 curl -X POST "http://localhost:8000/api/v1/admin/vaults/AVENIR/vesting/release" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
-# Response: executed_count=5
+# Response: executed_count=5, trace_id="abc-123"
 
-# Run 2 (immédiatement après)
+# Run 2 (immédiatement après, même ou différent trace_id)
 curl -X POST "http://localhost:8000/api/v1/admin/vaults/AVENIR/vesting/release" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 # Response: executed_count=0, skipped_count=5
+# (Les lots sont déjà RELEASED, donc skip même avec trace_id différent)
 ```
 
 ---
 
 ## Rejouabilité
 
-Le système est **rejouable** : après une erreur, un nouveau run avec un nouveau `trace_id` peut traiter les lots restants.
+Le système est **rejouable** : après une erreur, un nouveau run peut traiter les lots restants.
 
 **Scénario:**
 ```
-Run 1: trace_id="abc-123", traite lot #1, erreur sur lot #2
-Run 2: trace_id="def-456", lot #1 → skip (déjà traité), lot #2 → traite
+Run 1: trace_id="abc-123", traite lot #1 (status=RELEASED), erreur sur lot #2 (status=VESTED)
+Run 2: trace_id="def-456", lot #1 → skip (status=RELEASED), lot #2 → traite (status=VESTED)
 ```
+
+**Note:** La rejouabilité fonctionne car l'idempotence est basée sur `status`, pas sur `trace_id`.
 
 ---
 
