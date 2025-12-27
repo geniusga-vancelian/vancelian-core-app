@@ -733,9 +733,12 @@ def test_release_idempotent_two_runs_new_trace_id(db_session, test_user, avenir_
         trace_id=str(uuid4()),  # Different trace_id
     )
     
-    # Should skip because lot is already RELEASED (idempotence based on status)
-    assert summary2['executed_count'] == 0
-    assert summary2['skipped_count'] >= 1
+    # After first release, lot is RELEASED, so query won't find it (status != VESTED)
+    # The query filters by status=VESTED, so RELEASED lots are not in mature_lots
+    # Therefore matured_found=0, executed_count=0, and skipped_count=0 (nothing to skip)
+    assert summary2['executed_count'] == 0, f"Expected executed_count=0, got {summary2.get('executed_count', 0)}. matured_found={summary2.get('matured_found', 0)}"
+    assert summary2['matured_found'] == 0, f"Expected matured_found=0, got {summary2.get('matured_found', 0)}. Lot should be RELEASED and filtered out by query"
+    # skipped_count can be 0 because the lot is not in mature_lots (filtered by status=VESTED)
     
     # Verify only ONE release operation exists (no double-release)
     release_operations = db_session.query(Operation).filter(
