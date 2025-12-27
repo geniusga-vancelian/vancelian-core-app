@@ -31,6 +31,7 @@ from app.infrastructure.database import Base, get_db
 from app.main import app
 from app.core.users.models import User, UserStatus
 from app.core.accounts.models import Account, AccountType
+from app.core.vaults.models import Vault, VaultStatus
 from uuid import uuid4
 from decimal import Decimal
 
@@ -224,3 +225,18 @@ def test_user_with_balance(db_session: Session, test_user: User, test_internal_a
     db_session.commit()
     
     return test_user
+
+
+@pytest.fixture
+def avenir_vault(db_session: Session) -> Vault:
+    """Create AVENIR vault for testing"""
+    vault = Vault(
+        id=uuid4(),
+        code="AVENIR",
+        name="AVENIR - Vesting Vault",
+        status=VaultStatus.ACTIVE,
+    )
+    db_session.add(vault)
+    db_session.commit()
+    db_session.refresh(vault)
+    return vault

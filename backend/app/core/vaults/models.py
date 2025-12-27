@@ -3,9 +3,11 @@ Vault models - Cash-only vaults (coffres)
 """
 
 from decimal import Decimal
-from sqlalchemy import Column, String, ForeignKey, Enum as SQLEnum, Numeric, Text, DateTime, Index, CheckConstraint, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from datetime import date, timedelta
+from sqlalchemy import Column, String, ForeignKey, Enum as SQLEnum, Numeric, Text, DateTime, Date, Index, CheckConstraint, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 import enum
 from app.core.common.base_model import BaseModel
 
@@ -110,3 +112,86 @@ class WithdrawalRequest(BaseModel):
     # Relationships
     vault = relationship("Vault", back_populates="withdrawal_requests")
     user = relationship("User", foreign_keys=[user_id])
+
+
+class VestingLotStatus(str, enum.Enum):
+    """Vesting lot status enum"""
+    VESTED = "VESTED"  # Lot verrouillé, pas encore mature ou partiellement libéré
+    RELEASED = "RELEASED"  # Lot entièrement libéré
+    CANCELLED = "CANCELLED"  # Lot annulé (ex: coffre fermé)
+
+
+class VestingLot(BaseModel):
+    """
+    VestingLot model - Tracks vesting lots for AVENIR vault deposits
+    
+    Each deposit in AVENIR creates exactly one vesting lot with:
+    - deposit_day: Date normalisée à minuit UTC du dépôt
+    - release_day: Date normalisée à minuit UTC de maturité (deposit_day + 365 jours)
+    - amount: Montant original du dépôt (immuable)
+    - released_amount: Montant déjà libéré (0 <= released_amount <= amount)
+    - status: VESTED, RELEASED, ou CANCELLED
+    
+    Idempotence: UNIQUE(source_operation_id) garantit qu'un dépôt ne crée qu'un seul lot.
+    """
+    
+    __tablename__ = "vault_vesting_lots"
+    
+    # Références
+    vault_id = Column(UUID(as_uuid=True), ForeignKey("vaults.id", name="fk_vault_vesting_lots_vault_id", ondelete="CASCADE"), nullable=False, index=True)
+    vault_code = Column(String(50), nullable=False, index=True)  # Denormalized pour queries (ex: "AVENIR")
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", name="fk_vault_vesting_lots_user_id", ondelete="CASCADE"), nullable=False, index=True)
+    currency = Column(String(3), nullable=False, default="AED", index=True)  # ISO 4217
+    
+    # Période de vesting
+    deposit_day = Column(Date, nullable=False)  # Date normalisée à minuit UTC
+    release_day = Column(Date, nullable=False)  # Date normalisée à minuit UTC (deposit_day + 365)
+    
+    # Montants
+    amount = Column(Numeric(20, 2), nullable=False)  # Montant original du dépôt (immuable)
+    released_amount = Column(Numeric(20, 2), nullable=False, default=Decimal("0.00"))  # Montant déjà libéré
+    
+    # État
+    status = Column(String(20), nullable=False, default=VestingLotStatus.VESTED.value, index=True)  # VESTED, RELEASED, CANCELLED
+    
+    # Traçabilité
+    source_operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", name="fk_vault_vesting_lots_source_operation_id"), nullable=False, unique=True, index=True)  # Opération de dépôt originale
+    last_released_at = Column(DateTime(timezone=True), nullable=True)  # Timestamp du dernier release
+    last_release_operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", name="fk_vault_vesting_lots_last_release_operation_id"), nullable=True)  # Dernière opération de release
+    
+    # Idempotence pour job de release
+    release_job_trace_id = Column(UUID(as_uuid=True), nullable=True)  # Trace ID du dernier run qui a traité le lot
+    release_job_run_at = Column(DateTime(timezone=True), nullable=True)  # Timestamp du dernier run
+    
+    # Métadonnées extensibles
+    metadata = Column(JSONB, nullable=True)  # JSONB pour règles futures: release schedule, custom rules, etc.
+    
+    # Relationships
+    vault = relationship("Vault", foreign_keys=[vault_id], lazy="select")
+    user = relationship("User", foreign_keys=[user_id], lazy="select")
+    source_operation = relationship("Operation", foreign_keys=[source_operation_id], lazy="select")
+    last_release_operation = relationship("Operation", foreign_keys=[last_release_operation_id], lazy="select")
+    
+    # Table constraints
+    __table_args__ = (
+        CheckConstraint('amount > 0', name='ck_vault_vesting_lots_amount_positive'),
+        CheckConstraint('released_amount >= 0 AND released_amount <= amount', name='ck_vault_vesting_lots_released_amount_valid'),
+        CheckConstraint(
+            "(status = 'RELEASED' AND released_amount = amount) OR (status != 'RELEASED')",
+            name='ck_vault_vesting_lots_status_released'
+        ),
+        Index('ix_vault_vesting_lots_vault_user', 'vault_id', 'user_id'),
+        Index('ix_vault_vesting_lots_release_day_status', 'release_day', 'status'),
+        Index('ix_vault_vesting_lots_user_status', 'user_id', 'status'),
+        Index('ix_vault_vesting_lots_source_operation', 'source_operation_id'),
+        Index('ix_vault_vesting_lots_vault_code_release_day', 'vault_code', 'release_day', 'status'),
+        UniqueConstraint('source_operation_id', name='uq_vault_vesting_lots_source_operation'),
+    )
+    
+    @hybrid_property
+    def remaining_amount(self) -> Decimal:
+        """Montant restant à libérer (calculé)"""
+        return self.amount - self.released_amount
+    
+    def __repr__(self) -> str:
+        return f"<VestingLot(id={self.id}, vault_code={self.vault_code}, user_id={self.user_id}, amount={self.amount}, released_amount={self.released_amount}, status={self.status})>"

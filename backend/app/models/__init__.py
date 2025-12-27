@@ -52,6 +52,9 @@ from app.core.partners.models import (
     PartnerPortfolioProjectStatus, PartnerPortfolioMedia, partner_offers,
 )
 
+# 10. Vault models (depends on User)
+from app.core.vaults.models import Vault, VaultAccount, WithdrawalRequest, VestingLot, VaultStatus, WithdrawalRequestStatus, VestingLotStatus
+
 # Export all for convenience
 __all__ = [
     "Base",
@@ -98,6 +101,8 @@ __all__ = [
     "WithdrawalRequest",
     "VaultStatus",
     "WithdrawalRequestStatus",
+    "VestingLot",
+    "VestingLotStatus",
     "WalletLock",
     "LockReason",
     "ReferenceType",

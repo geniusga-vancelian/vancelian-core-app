@@ -41,7 +41,7 @@ from app.models import (
     WalletLock,
 )
 # Import vault models directly (they may not be in __all__)
-from app.core.vaults.models import Vault, VaultAccount, WithdrawalRequest
+from app.core.vaults.models import Vault, VaultAccount, WithdrawalRequest, VestingLot, VestingLotStatus
 
 target_metadata = Base.metadata
 
