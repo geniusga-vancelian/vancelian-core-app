@@ -19,6 +19,7 @@ class OperationType(str, enum.Enum):
     REVERSAL = "REVERSAL"  # Generic reversal
     VAULT_DEPOSIT = "VAULT_DEPOSIT"  # Deposit into vault
     VAULT_WITHDRAW_EXECUTED = "VAULT_WITHDRAW_EXECUTED"  # Withdrawal from vault (executed)
+    VAULT_VESTING_RELEASE = "VAULT_VESTING_RELEASE"  # Release of vesting funds from AVENIR vault
 
 
 class OperationStatus(str, enum.Enum):

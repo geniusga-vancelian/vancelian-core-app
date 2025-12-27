@@ -15,6 +15,9 @@ interface Transaction {
   created_at: string
   metadata: Record<string, any> | null
   offer_product: string | null
+  amount_display?: string | null
+  direction?: string | null
+  product_label?: string | null
 }
 
 // Helper function to safely parse ISO date string
@@ -182,8 +185,14 @@ export default function TransactionsPage() {
                                  txn.type === 'WITHDRAWAL' ? 'Retrait' :
                                  txn.type === 'INVESTMENT' ? 'Investissement' :
                                  txn.operation_type === 'INVEST_EXCLUSIVE' ? 'Investissement' :
+  txn.operation_type === 'VAULT_DEPOSIT' ? 'Dépôt Coffre' :
+  txn.operation_type === 'VAULT_WITHDRAW_EXECUTED' ? 'Retrait Coffre' :
+  txn.operation_type === 'VAULT_VESTING_RELEASE' ? 'Libération Vesting AVENIR' :
                                  txn.type
-                const offerInfo = txn.offer_product || txn.metadata?.offer_name || txn.metadata?.offer_code
+                // Use amount_display if present (always positive), otherwise fallback to amount
+                const displayAmount = txn.amount_display ?? txn.amount
+                // Use product_label if present, otherwise fallback to offer_product/metadata
+                const productInfo = txn.product_label || txn.offer_product || txn.metadata?.offer_name || txn.metadata?.offer_code
                 const txnId = txn.transaction_id || txn.operation_id
                 return (
                   <tr
@@ -195,17 +204,30 @@ export default function TransactionsPage() {
                       {formatDate(txn.created_at)}
                     </td>
                     <td className="border border-gray-300 p-2">
-                      <span className={`px-2 py-1 rounded text-sm ${
-                        txn.type === 'DEPOSIT' || txn.operation_type === 'DEPOSIT_AED' ? 'bg-green-100 text-green-800' :
-                        txn.type === 'WITHDRAWAL' ? 'bg-red-100 text-red-800' :
-                        txn.type === 'INVESTMENT' || txn.operation_type === 'INVEST_EXCLUSIVE' ? 'bg-blue-100 text-blue-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {typeLabel}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded text-sm ${
+                          txn.type === 'DEPOSIT' || txn.operation_type === 'DEPOSIT_AED' ? 'bg-green-100 text-green-800' :
+                          txn.type === 'WITHDRAWAL' ? 'bg-red-100 text-red-800' :
+                          txn.type === 'INVESTMENT' || txn.operation_type === 'INVEST_EXCLUSIVE' ? 'bg-blue-100 text-blue-800' :
+                          txn.operation_type === 'VAULT_DEPOSIT' ? 'bg-green-100 text-green-800' :
+                          txn.operation_type === 'VAULT_WITHDRAW_EXECUTED' ? 'bg-red-100 text-red-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {typeLabel}
+                        </span>
+                        {txn.direction && (
+                          <span className={`px-2 py-1 rounded text-xs ${
+                            txn.direction === 'IN' ? 'bg-green-100 text-green-700' :
+                            txn.direction === 'OUT' ? 'bg-blue-100 text-blue-700' :
+                            'bg-gray-100 text-gray-700'
+                          }`}>
+                            {txn.direction === 'IN' ? '↓' : '↑'} {txn.direction}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="border border-gray-300 p-2 text-right font-mono">
-                      {parseFloat(txn.amount).toLocaleString('fr-FR', {
+                      {parseFloat(displayAmount).toLocaleString('fr-FR', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })} {txn.currency}
@@ -221,9 +243,11 @@ export default function TransactionsPage() {
                       </span>
                     </td>
                     <td className="border border-gray-300 p-2 text-sm text-gray-500">
-                      {offerInfo ? (
+                      {productInfo ? (
                         <div>
-                          {txn.offer_product ? (
+                          {txn.product_label ? (
+                            <div className="font-medium">{txn.product_label}</div>
+                          ) : txn.offer_product ? (
                             <div className="font-medium">{txn.offer_product}</div>
                           ) : (
                             <>

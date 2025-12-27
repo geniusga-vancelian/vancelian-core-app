@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from decimal import Decimal
+from typing import Optional
+from datetime import date
 import logging
 
 from app.infrastructure.database import get_db
@@ -17,6 +19,7 @@ from app.schemas.vaults import (
     WithdrawalListResponse,
     WithdrawalListItem,
     VaultSnapshot,
+    VestingReleaseSummaryResponse,
 )
 from app.auth.dependencies import require_admin_role
 from app.auth.oidc import Principal
@@ -29,7 +32,9 @@ from app.services.vault_helpers import get_vault_cash_balance
 from app.services.system_wallet_helpers import get_vault_system_wallet_balances
 from app.core.vaults.models import Vault, WithdrawalRequest, WithdrawalRequestStatus, VaultAccount
 from app.utils.trace_id import get_trace_id
+from app.services.vesting_service import release_avenir_vesting_lots, VestingReleaseError
 from pydantic import BaseModel, Field
+from datetime import date
 
 logger = logging.getLogger(__name__)
 

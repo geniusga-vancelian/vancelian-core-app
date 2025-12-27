@@ -34,6 +34,8 @@ from app.services.vault_service import (
 from app.services.vault_helpers import get_vault_cash_balance
 from app.core.vaults.models import WithdrawalRequest, WithdrawalRequestStatus
 from app.utils.trace_id import get_trace_id
+from app.schemas.vaults import VestingTimelineResponse, VestingTimelineItem
+from app.core.vaults.models import VestingLot, VestingLotStatus
 
 logger = logging.getLogger(__name__)
 

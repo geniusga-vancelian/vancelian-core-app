@@ -262,3 +262,28 @@ class ProcessWithdrawalsResponse(BaseModel):
                 "remaining_count": 2,
             }
         }
+
+
+class VestingReleaseSummaryResponse(BaseModel):
+    """Response schema for vesting release summary"""
+    matured_found: int = Field(..., description="Number of mature lots found")
+    executed_count: int = Field(..., description="Number of lots successfully released")
+    executed_amount: str = Field(..., description="Total amount released")
+    skipped_count: int = Field(..., description="Number of lots skipped")
+    errors_count: int = Field(..., description="Number of errors encountered")
+    errors: List[str] = Field(default_factory=list, description="List of error messages")
+    trace_id: str = Field(..., description="Trace ID used for this run")
+    as_of_date: str = Field(..., description="Date used for maturity check (ISO format)")
+
+
+class VestingTimelineItem(BaseModel):
+    """Vesting timeline item"""
+    date: str = Field(..., description="Release date (YYYY-MM-DD)")
+    amount: str = Field(..., description="Amount to be released on this date")
+
+
+class VestingTimelineResponse(BaseModel):
+    """Response schema for vesting timeline"""
+    vault_code: str = Field(..., description="Vault code (e.g., AVENIR)")
+    currency: str = Field(..., description="Currency code")
+    items: List[VestingTimelineItem] = Field(..., description="List of release dates and amounts")

@@ -739,6 +739,191 @@ export const transactionsApi = {
 }
 
 /**
+ * Deposit API (simulation - DEV ONLY)
+ */
+export interface SimulateZandDepositRequest {
+  currency?: string
+  amount: string
+  reference?: string
+}
+
+export interface SimulateZandDepositResponse {
+  status: string
+  currency: string
+  amount: string
+  reference: string
+  operation_id: string
+  transaction_id: string | null
+  sim_version?: string
+}
+
+export const depositApi = {
+  /**
+   * Simulate a ZAND deposit (DEV ONLY)
+   */
+  simulateZandDeposit: async (payload: SimulateZandDepositRequest): Promise<SimulateZandDepositResponse> => {
+    const requestBody = {
+      currency: payload.currency || "AED",
+      amount: payload.amount,
+      ...(payload.reference && { reference: payload.reference }),
+    }
+    
+    const response = await apiRequest('api/v1/webhooks/zandbank/simulate', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    })
+    
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to simulate deposit')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    
+    return response.json()
+  },
+}
+
+/**
+ * Vaults API Types
+ */
+export interface VaultAccountMe {
+  vault_account_id: string
+  principal: string
+  available_balance: string
+  locked_until: string | null
+  vault: {
+    code: string
+    name: string
+    status: string
+    cash_balance: string
+    total_aum: string
+  }
+}
+
+export interface VaultDepositResponse {
+  operation_id: string
+  vault_account_id: string
+  vault: {
+    code: string
+    name: string
+    status: string
+    cash_balance: string
+    total_aum: string
+  }
+}
+
+export interface VaultWithdrawResponse {
+  request_id: string
+  status: 'EXECUTED' | 'PENDING'
+  operation_id?: string
+  vault: {
+    code: string
+    name: string
+    status: string
+    cash_balance: string
+    total_aum: string
+  }
+}
+
+export interface WithdrawalListItem {
+  request_id: string
+  amount: string
+  currency: string
+  status: 'PENDING' | 'EXECUTED' | 'CANCELLED'
+  reason?: string
+  created_at: string
+  executed_at?: string
+}
+
+export interface VaultWithdrawalsResponse {
+  withdrawals: WithdrawalListItem[]
+}
+
+export interface VestingTimelineItem {
+  date: string  // YYYY-MM-DD
+  amount: string
+}
+
+export interface VestingTimelineResponse {
+  vault_code: string
+  currency: string
+  items: VestingTimelineItem[]
+}
+
+/**
+ * Vaults API
+ */
+export const vaultsApi = {
+  getMe: async (vaultCode: string): Promise<VaultAccountMe> => {
+    const response = await apiRequest(`api/v1/vaults/${vaultCode}/me`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch vault account')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  deposit: async (vaultCode: string, amount: string): Promise<VaultDepositResponse> => {
+    const response = await apiRequest(`api/v1/vaults/${vaultCode}/deposits`, {
+      method: 'POST',
+      body: JSON.stringify({
+        amount: amount,
+        currency: 'AED',
+      }),
+    })
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to deposit to vault')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  withdraw: async (vaultCode: string, amount: string, reason?: string): Promise<VaultWithdrawResponse> => {
+    const response = await apiRequest(`api/v1/vaults/${vaultCode}/withdrawals`, {
+      method: 'POST',
+      body: JSON.stringify({
+        amount: amount,
+        currency: 'AED',
+        ...(reason && { reason }),
+      }),
+    })
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to withdraw from vault')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+
+  listWithdrawals: async (vaultCode: string): Promise<VaultWithdrawalsResponse> => {
+    const response = await apiRequest(`api/v1/vaults/${vaultCode}/withdrawals`)
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch withdrawals')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    return response.json()
+  },
+}
+
+/**
  * Partners Public API Types
  */
 export type PartnerListItem = {
@@ -830,6 +1015,66 @@ export type PartnerDetail = {
     status: string
     is_primary: boolean
   }>
+}
+
+/**
+ * DEV API (Development-only endpoints)
+ */
+export interface WalletMatrixRow {
+  label: string
+  row_kind: string
+  scope: {
+    type: string
+    id: string | null
+    owner: string
+  }
+  available: string
+  locked: string
+  blocked: string
+  meta: Record<string, any>
+  offer_id?: string | null
+  vault_id?: string | null
+  position_principal?: string | null
+}
+
+export interface WalletMatrixResponse {
+  currency: string
+  columns: string[]
+  rows: WalletMatrixRow[]
+  meta: {
+    generated_at: string
+    sim_version: string
+    user_id: string
+  }
+}
+
+export const devApi = {
+  /**
+   * Get wallet matrix (DEV ONLY)
+   */
+  walletMatrix: async (showSystem: boolean = false): Promise<WalletMatrixResponse> => {
+    const queryParams = new URLSearchParams()
+    if (showSystem) {
+      queryParams.append('show_system', 'true')
+    }
+    const queryString = queryParams.toString()
+    const endpoint = `api/v1/dev/wallet-matrix${queryString ? `?${queryString}` : ''}`
+    
+    const response = await apiRequest(endpoint, {
+      method: 'GET',
+    })
+    
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      const err: any = new Error(error.message || 'Failed to fetch wallet matrix')
+      err.code = error.code
+      err.trace_id = error.trace_id
+      err.status = response.status
+      throw err
+    }
+    
+    return response.json()
+  },
 }
 
 /**

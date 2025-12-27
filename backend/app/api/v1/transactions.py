@@ -17,6 +17,7 @@ from app.core.ledger.models import LedgerEntry, Operation, OperationType, Operat
 from app.core.accounts.models import Account, AccountType
 from app.core.offers.models import OfferInvestment, Offer
 from app.core.users.models import User
+from app.core.vaults.models import Vault
 from app.schemas.wallet import TransactionListItem, TransactionDetailResponse, WalletMovement
 
 from app.auth.dependencies import require_user_role, get_user_id_from_principal
@@ -274,6 +275,39 @@ async def get_transactions(
         else:
             created_at_str = txn.created_at.isoformat() + "Z"
         
+        # Calculate vault-specific fields (if primary_op is a vault operation)
+        amount_display = None
+        direction = None
+        product_label = None
+        
+        if primary_op and primary_op.type in [OperationType.VAULT_DEPOSIT, OperationType.VAULT_WITHDRAW_EXECUTED, OperationType.VAULT_VESTING_RELEASE]:
+            # Calculate amount_display (always positive)
+            amount_display = str(abs(amount).quantize(Decimal('0.01')))
+            
+            # Set direction
+            if primary_op.type == OperationType.VAULT_DEPOSIT:
+                direction = "IN"
+            elif primary_op.type == OperationType.VAULT_WITHDRAW_EXECUTED:
+                direction = "OUT"
+            elif primary_op.type == OperationType.VAULT_VESTING_RELEASE:
+                direction = "IN"  # Release adds to available
+            
+            # Get vault code from metadata or query Vault
+            vault_code = metadata.get("vault_code")
+            if not vault_code and metadata.get("vault_id"):
+                try:
+                    vault_id = UUID(metadata["vault_id"])
+                    vault = db.query(Vault).filter(Vault.id == vault_id).first()
+                    if vault:
+                        vault_code = vault.code
+                except (ValueError, TypeError):
+                    pass
+            
+            if vault_code:
+                product_label = f"COFFRE {vault_code}"
+            else:
+                product_label = "COFFRE"
+        
         result.append(TransactionListItem(
             transaction_id=str(txn.id),
             operation_id=str(primary_op.id) if primary_op else None,
@@ -285,13 +319,21 @@ async def get_transactions(
             created_at=created_at_str,
             metadata=metadata,
             offer_product=offer_product,
+            amount_display=amount_display,
+            direction=direction,
+            product_label=product_label,
         ))
     
     # 2. Get standalone Operations (those without transaction_id) that affect user wallet
     if wallet_account_ids:
         op_query = db.query(Operation).filter(
             Operation.transaction_id.is_(None),
-            Operation.type.in_([OperationType.INVEST_EXCLUSIVE]),  # Only user-facing standalone operations
+            Operation.type.in_([
+                OperationType.INVEST_EXCLUSIVE,
+                OperationType.VAULT_DEPOSIT,
+                OperationType.VAULT_WITHDRAW_EXECUTED,
+                OperationType.VAULT_VESTING_RELEASE,
+            ]),  # User-facing standalone operations (offers + vaults)
         )
         
         # Filter by currency if specified
@@ -368,6 +410,39 @@ async def get_transactions(
             # Map operation type to transaction type for display
             display_type = "INVESTMENT" if op.type == OperationType.INVEST_EXCLUSIVE else op.type.value
             
+            # Calculate vault-specific fields
+            amount_display = None
+            direction = None
+            product_label = None
+            
+            if op.type in [OperationType.VAULT_DEPOSIT, OperationType.VAULT_WITHDRAW_EXECUTED, OperationType.VAULT_VESTING_RELEASE]:
+                # Calculate amount_display (always positive)
+                amount_display = str(abs(amount).quantize(Decimal('0.01')))
+                
+                # Set direction
+                if op.type == OperationType.VAULT_DEPOSIT:
+                    direction = "IN"
+                elif op.type == OperationType.VAULT_WITHDRAW_EXECUTED:
+                    direction = "OUT"
+                elif op.type == OperationType.VAULT_VESTING_RELEASE:
+                    direction = "IN"  # Release adds to available
+                
+                # Get vault code from metadata or query Vault
+                vault_code = metadata.get("vault_code")
+                if not vault_code and metadata.get("vault_id"):
+                    try:
+                        vault_id = UUID(metadata["vault_id"])
+                        vault = db.query(Vault).filter(Vault.id == vault_id).first()
+                        if vault:
+                            vault_code = vault.code
+                    except (ValueError, TypeError):
+                        pass
+                
+                if vault_code:
+                    product_label = f"COFFRE {vault_code}"
+                else:
+                    product_label = "COFFRE"
+            
             result.append(TransactionListItem(
                 transaction_id=None,
                 operation_id=str(op.id),
@@ -379,6 +454,9 @@ async def get_transactions(
                 created_at=created_at_str,
                 metadata=metadata,
                 offer_product=offer_product,
+                amount_display=amount_display,
+                direction=direction,
+                product_label=product_label,
             ))
     
     # Sort by created_at DESC and limit
