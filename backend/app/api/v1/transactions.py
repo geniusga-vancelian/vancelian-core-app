@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
+import logging
 
 from app.infrastructure.database import get_db
 from app.core.transactions.models import Transaction, TransactionType, TransactionStatus
@@ -24,6 +25,7 @@ from app.auth.dependencies import require_user_role, get_user_id_from_principal
 from app.auth.oidc import Principal
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _compute_operation_amount(
@@ -183,150 +185,241 @@ async def get_transactions(
     wallet_account_ids = [acc.id for acc in wallet_accounts]
     
     # Build unified result list
+    # DEFENSIVE: Wrap entire processing in try/except to ensure we always return valid JSON
     result = []
     
-    # 1. Get Transactions
-    txn_query = db.query(Transaction).filter(Transaction.user_id == user_id)
-    
-    if type:
-        try:
-            transaction_type = TransactionType[type.upper()]
-            txn_query = txn_query.filter(Transaction.type == transaction_type)
-        except KeyError:
-            raise HTTPException(status_code=400, detail=f"Invalid transaction type: {type}")
-    
-    if status:
-        try:
-            transaction_status = TransactionStatus[status.upper()]
-            txn_query = txn_query.filter(Transaction.status == transaction_status)
-        except KeyError:
-            raise HTTPException(status_code=400, detail=f"Invalid transaction status: {status}")
-    
-    transactions = txn_query.order_by(Transaction.created_at.desc()).limit(limit * 2).all()  # Get more to account for filtering
-    
-    for txn in transactions:
-        # Determine currency: first try transaction metadata, then ledger entries, then default
-        currency_val = "AED"  # Default
-        if txn.transaction_metadata and "currency" in txn.transaction_metadata:
-            currency_val = txn.transaction_metadata["currency"]
-        else:
-            # Fallback: get from first operation's ledger entry
-            operations = db.query(Operation).filter(Operation.transaction_id == txn.id).limit(1).all()
-            if operations:
-                ledger_entry = db.query(LedgerEntry).filter(
-                    LedgerEntry.operation_id == operations[0].id
-                ).first()
-                if ledger_entry:
-                    currency_val = ledger_entry.currency
+    try:
+        # 1. Get Transactions
+        txn_query = db.query(Transaction).filter(Transaction.user_id == user_id)
         
-        # Filter by currency if specified
-        if currency and currency_val != currency:
-            continue
+        if type:
+            try:
+                transaction_type = TransactionType[type.upper()]
+                txn_query = txn_query.filter(Transaction.type == transaction_type)
+            except KeyError:
+                raise HTTPException(status_code=400, detail=f"Invalid transaction type: {type}")
         
-        amount = _compute_transaction_amount(
-            db, 
-            txn.id, 
-            user_id, 
-            currency_val,
-            transaction_type=txn.type,
-            transaction_metadata=txn.transaction_metadata,
-        )
+        if status:
+            try:
+                transaction_status = TransactionStatus[status.upper()]
+                txn_query = txn_query.filter(Transaction.status == transaction_status)
+            except KeyError:
+                raise HTTPException(status_code=400, detail=f"Invalid transaction status: {status}")
         
-        # Skip if amount is zero (no wallet impact)
-        # Note: For INVESTMENT, amount should never be zero if transaction was successful
-        if amount == 0:
-            continue
+        transactions = txn_query.order_by(Transaction.created_at.desc()).limit(limit * 2).all()  # Get more to account for filtering
         
-        # Get primary operation for metadata
-        primary_op = db.query(Operation).filter(Operation.transaction_id == txn.id).first()
-        operation_type = primary_op.type.value if primary_op else None
-        
-        # Merge transaction metadata with operation metadata (transaction metadata takes precedence for offer info)
-        metadata = txn.transaction_metadata or {}
-        if primary_op and primary_op.operation_metadata:
-            # Merge operation metadata into transaction metadata
-            metadata = {**(primary_op.operation_metadata or {}), **metadata}
-        
-        # Extract offer_product for display (offer_name + offer_code)
-        offer_product = None
-        if metadata:
-            offer_name = metadata.get("offer_name")
-            offer_code = metadata.get("offer_code")
-            if offer_name and offer_code:
-                offer_product = f"{offer_name} ({offer_code})"
-            elif offer_name:
-                offer_product = offer_name
-            elif offer_code:
-                offer_product = offer_code
-        
-        # Normalize datetime
-        if txn.created_at.tzinfo is not None:
-            created_at_utc = txn.created_at.astimezone(timezone.utc)
-            iso_str = created_at_utc.isoformat()
-            if iso_str.endswith('+00:00') or iso_str.endswith('-00:00'):
-                created_at_str = iso_str[:-6] + 'Z'
-            elif '+' in iso_str or (iso_str.count('-') >= 3 and len(iso_str) > 19):
-                if len(iso_str) >= 6 and iso_str[-6] in '+-' and iso_str[-3] == ':':
-                    created_at_str = iso_str[:-6] + 'Z'
-                else:
-                    created_at_str = iso_str + 'Z'
-            else:
-                created_at_str = iso_str + 'Z'
-        else:
-            created_at_str = txn.created_at.isoformat() + "Z"
-        
-        # Calculate vault-specific fields (if primary_op is a vault operation)
-        amount_display = None
-        direction = None
-        product_label = None
-        
-        if primary_op and primary_op.type in [OperationType.VAULT_DEPOSIT, OperationType.VAULT_WITHDRAW_EXECUTED, OperationType.VAULT_VESTING_RELEASE]:
-            # Calculate amount_display (always positive)
-            amount_display = str(abs(amount).quantize(Decimal('0.01')))
-            
-            # Set direction
-            if primary_op.type == OperationType.VAULT_DEPOSIT:
-                direction = "IN"
-            elif primary_op.type == OperationType.VAULT_WITHDRAW_EXECUTED:
-                direction = "OUT"
-            elif primary_op.type == OperationType.VAULT_VESTING_RELEASE:
-                direction = "IN"  # Release adds to available
-            
-            # Get vault code from metadata or query Vault
-            vault_code = metadata.get("vault_code")
-            if not vault_code and metadata.get("vault_id"):
+        for txn in transactions:
+            try:
+                # Determine currency: first try transaction metadata, then ledger entries, then default
+                currency_val = "AED"  # Default
                 try:
-                    vault_id = UUID(metadata["vault_id"])
-                    vault = db.query(Vault).filter(Vault.id == vault_id).first()
-                    if vault:
-                        vault_code = vault.code
-                except (ValueError, TypeError):
+                    if txn.transaction_metadata and "currency" in txn.transaction_metadata:
+                        currency_val = txn.transaction_metadata["currency"]
+                    else:
+                        # Fallback: get from first operation's ledger entry
+                        operations = db.query(Operation).filter(Operation.transaction_id == txn.id).limit(1).all()
+                        if operations:
+                            ledger_entry = db.query(LedgerEntry).filter(
+                                LedgerEntry.operation_id == operations[0].id
+                            ).first()
+                            if ledger_entry:
+                                currency_val = ledger_entry.currency
+                except (AttributeError, TypeError, KeyError):
+                    # Keep default "AED"
                     pass
-            
-            if vault_code:
-                product_label = f"COFFRE {vault_code}"
-            else:
-                product_label = "COFFRE"
+                
+                # Filter by currency if specified
+                if currency and currency_val != currency:
+                    continue
+                
+                # Compute amount with error handling
+                try:
+                    amount = _compute_transaction_amount(
+                        db, 
+                        txn.id, 
+                        user_id, 
+                        currency_val,
+                        transaction_type=txn.type,
+                        transaction_metadata=txn.transaction_metadata,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Error computing amount for transaction {txn.id}: {e}",
+                        extra={"transaction_id": str(txn.id)}
+                    )
+                    amount = Decimal('0')
+                
+                # Skip if amount is zero (no wallet impact)
+                # Note: For INVESTMENT, amount should never be zero if transaction was successful
+                if amount == 0:
+                    continue
+                
+                # Get primary operation for metadata (defensive)
+                try:
+                    primary_op = db.query(Operation).filter(Operation.transaction_id == txn.id).first()
+                    operation_type = primary_op.type.value if primary_op and primary_op.type else None
+                except (AttributeError, TypeError):
+                    primary_op = None
+                    operation_type = None
+                
+                # Merge transaction metadata with operation metadata (transaction metadata takes precedence for offer info)
+                try:
+                    metadata = txn.transaction_metadata or {}
+                    if primary_op and primary_op.operation_metadata:
+                        # Merge operation metadata into transaction metadata
+                        metadata = {**(primary_op.operation_metadata or {}), **metadata}
+                except (AttributeError, TypeError):
+                    metadata = {}
+                
+                # Extract offer_product for display (offer_name + offer_code) - defensive
+                offer_product = None
+                try:
+                    if metadata:
+                        offer_name = metadata.get("offer_name")
+                        offer_code = metadata.get("offer_code")
+                        if offer_name and offer_code:
+                            offer_product = f"{offer_name} ({offer_code})"
+                        elif offer_name:
+                            offer_product = offer_name
+                        elif offer_code:
+                            offer_product = offer_code
+                except (AttributeError, TypeError, KeyError):
+                    offer_product = None
+                
+                # Normalize datetime (defensive)
+                try:
+                    if txn.created_at and txn.created_at.tzinfo is not None:
+                        created_at_utc = txn.created_at.astimezone(timezone.utc)
+                        iso_str = created_at_utc.isoformat()
+                        if iso_str.endswith('+00:00') or iso_str.endswith('-00:00'):
+                            created_at_str = iso_str[:-6] + 'Z'
+                        elif '+' in iso_str or (iso_str.count('-') >= 3 and len(iso_str) > 19):
+                            if len(iso_str) >= 6 and iso_str[-6] in '+-' and iso_str[-3] == ':':
+                                created_at_str = iso_str[:-6] + 'Z'
+                            else:
+                                created_at_str = iso_str + 'Z'
+                        else:
+                            created_at_str = iso_str + 'Z'
+                    elif txn.created_at:
+                        created_at_str = txn.created_at.isoformat() + "Z"
+                    else:
+                        # Fallback: use current time
+                        created_at_str = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                except (AttributeError, TypeError, ValueError):
+                    # Fallback: use current time
+                    created_at_str = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                
+                # Calculate vault-specific fields (if primary_op is a vault operation)
+                # DEFENSIVE: Always provide safe defaults to avoid serialization errors
+                amount_display = None
+                direction = None
+                product_label = None
+                
+                try:
+                    if primary_op and primary_op.type in [OperationType.VAULT_DEPOSIT, OperationType.VAULT_WITHDRAW_EXECUTED, OperationType.VAULT_VESTING_RELEASE]:
+                        # Calculate amount_display (always positive) - defensive
+                        try:
+                            amount_display = str(abs(amount).quantize(Decimal('0.01')))
+                        except (TypeError, ValueError, AttributeError):
+                            # Fallback: use amount as string if quantize fails
+                            try:
+                                amount_display = str(abs(float(amount)))
+                            except (TypeError, ValueError):
+                                amount_display = "0.00"
+                        
+                        # Set direction based on operation type (defensive mapping)
+                        if primary_op.type == OperationType.VAULT_DEPOSIT:
+                            direction = "IN"
+                        elif primary_op.type == OperationType.VAULT_WITHDRAW_EXECUTED:
+                            direction = "OUT"
+                        elif primary_op.type == OperationType.VAULT_VESTING_RELEASE:
+                            direction = "IN"  # Release adds to available
+                        else:
+                            # Fallback: determine from amount sign
+                            direction = "IN" if amount >= 0 else "OUT"
+                        
+                        # Get vault code from metadata or query Vault (defensive)
+                        vault_code = None
+                        try:
+                            vault_code = metadata.get("vault_code") if metadata else None
+                            if not vault_code and metadata and metadata.get("vault_id"):
+                                try:
+                                    vault_id = UUID(metadata["vault_id"])
+                                    vault = db.query(Vault).filter(Vault.id == vault_id).first()
+                                    if vault:
+                                        vault_code = vault.code
+                                except (ValueError, TypeError, AttributeError):
+                                    pass
+                        except (AttributeError, TypeError):
+                            pass
+                        
+                        # For VAULT_VESTING_RELEASE, vault_code should always be 'AVENIR'
+                        if primary_op.type == OperationType.VAULT_VESTING_RELEASE:
+                            vault_code = vault_code or 'AVENIR'  # Fallback to AVENIR if missing
+                        
+                        # Set product_label with fallback
+                        if vault_code:
+                            product_label = f"COFFRE {vault_code}"
+                        else:
+                            product_label = "COFFRE"
+                except Exception as e:
+                    # Log but don't fail - use safe defaults
+                    logger.warning(
+                        f"Error computing vault fields for transaction {txn.id}: {e}",
+                        extra={"transaction_id": str(txn.id), "operation_id": str(primary_op.id) if primary_op else None}
+                    )
+                    # Keep defaults (None) - schema allows None for these fields
+                
+                # Ensure offer_product has a fallback if missing
+                if not offer_product and metadata:
+                    try:
+                        offer_name = metadata.get("offer_name") or "-"
+                        offer_code = metadata.get("offer_code") or ""
+                        if offer_code:
+                            offer_product = f"{offer_name} ({offer_code})"
+                        else:
+                            offer_product = offer_name
+                    except (AttributeError, TypeError):
+                        offer_product = "-"
+                
+                try:
+                    result.append(TransactionListItem(
+                        transaction_id=str(txn.id),
+                        operation_id=str(primary_op.id) if primary_op else None,
+                        type=txn.type.value,
+                        operation_type=operation_type,
+                        status=txn.status.value,
+                        amount=str(amount),
+                        currency=currency_val,
+                        created_at=created_at_str,
+                        metadata=metadata,
+                        offer_product=offer_product,
+                        amount_display=amount_display,
+                        direction=direction,
+                        product_label=product_label,
+                    ))
+                except Exception as e:
+                    # Log error but continue processing other transactions
+                    logger.error(
+                        f"Error serializing transaction {txn.id}: {e}",
+                        extra={"transaction_id": str(txn.id), "error": str(e)},
+                        exc_info=True
+                    )
+                    # Skip this transaction rather than failing the entire request
+                    continue
+            except Exception as e:
+                # Log error but continue processing other transactions
+                logger.error(
+                    f"Error processing transaction {txn.id}: {e}",
+                    extra={"transaction_id": str(txn.id), "error": str(e)},
+                    exc_info=True
+                )
+                # Skip this transaction rather than failing the entire request
+                continue
         
-        result.append(TransactionListItem(
-            transaction_id=str(txn.id),
-            operation_id=str(primary_op.id) if primary_op else None,
-            type=txn.type.value,
-            operation_type=operation_type,
-            status=txn.status.value,
-            amount=str(amount),
-            currency=currency_val,
-            created_at=created_at_str,
-            metadata=metadata,
-            offer_product=offer_product,
-            amount_display=amount_display,
-            direction=direction,
-            product_label=product_label,
-        ))
-    
-    # 2. Get standalone Operations (those without transaction_id) that affect user wallet
-    if wallet_account_ids:
-        op_query = db.query(Operation).filter(
+        # 2. Get standalone Operations (those without transaction_id) that affect user wallet
+        if wallet_account_ids:
+            op_query = db.query(Operation).filter(
             Operation.transaction_id.is_(None),
             Operation.type.in_([
                 OperationType.INVEST_EXCLUSIVE,
@@ -353,119 +446,222 @@ async def get_transactions(
         standalone_ops = op_query.order_by(Operation.created_at.desc()).limit(limit * 2).all() if op_query else []
         
         for op in standalone_ops:
-            # Check if this operation affects user wallet
-            ledger_entries = db.query(LedgerEntry).filter(
-                LedgerEntry.operation_id == op.id,
-                LedgerEntry.account_id.in_(wallet_account_ids),
-            ).all()
+            try:
+                # Check if this operation affects user wallet
+                ledger_entries = db.query(LedgerEntry).filter(
+                    LedgerEntry.operation_id == op.id,
+                    LedgerEntry.account_id.in_(wallet_account_ids),
+                ).all()
+                
+                if not ledger_entries:
+                    continue
+                
+                # Determine currency from ledger entry (defensive)
+                try:
+                    currency_val = ledger_entries[0].currency if ledger_entries else (currency or "AED")
+                except (AttributeError, IndexError, TypeError):
+                    currency_val = currency or "AED"
+                
+                # Filter by currency if specified
+                if currency and currency_val != currency:
+                    continue
+                
+                # Compute amount with error handling
+                try:
+                    amount = _compute_operation_amount(db, op.id, user_id, currency_val)
+                except Exception as e:
+                    logger.warning(
+                        f"Error computing amount for operation {op.id}: {e}",
+                        extra={"operation_id": str(op.id)}
+                    )
+                    amount = Decimal('0')
+                
+                # Skip if amount is zero
+                if amount == 0:
+                    continue
             
-            if not ledger_entries:
-                continue
-            
-            # Determine currency from ledger entry
-            currency_val = ledger_entries[0].currency if ledger_entries else (currency or "AED")
-            
-            # Filter by currency if specified
-            if currency and currency_val != currency:
-                continue
-            
-            amount = _compute_operation_amount(db, op.id, user_id, currency_val)
-            
-            # Skip if amount is zero
-            if amount == 0:
-                continue
-            
-            # Get offer investment metadata if available
-            metadata = op.operation_metadata or {}
-            offer_product = None
-            offer_investment = db.query(OfferInvestment).filter(OfferInvestment.operation_id == op.id).first()
-            if offer_investment:
-                offer = db.query(Offer).filter(Offer.id == offer_investment.offer_id).first()
-                if offer:
-                    metadata = {
-                        **(metadata or {}),
-                        "offer_id": str(offer.id),
-                        "offer_code": offer.code,
-                        "offer_name": offer.name,
-                        "investment_id": str(offer_investment.id),
-                    }
-                    offer_product = f"{offer.name} ({offer.code})"
-            
-            # Normalize datetime
-            if op.created_at.tzinfo is not None:
-                created_at_utc = op.created_at.astimezone(timezone.utc)
-                iso_str = created_at_utc.isoformat()
-                if iso_str.endswith('+00:00') or iso_str.endswith('-00:00'):
-                    created_at_str = iso_str[:-6] + 'Z'
-                elif '+' in iso_str or (iso_str.count('-') >= 3 and len(iso_str) > 19):
-                    if len(iso_str) >= 6 and iso_str[-6] in '+-' and iso_str[-3] == ':':
-                        created_at_str = iso_str[:-6] + 'Z'
+                # Get offer investment metadata if available (defensive)
+                try:
+                    metadata = op.operation_metadata or {}
+                    offer_product = None
+                    offer_investment = db.query(OfferInvestment).filter(OfferInvestment.operation_id == op.id).first()
+                    if offer_investment:
+                        offer = db.query(Offer).filter(Offer.id == offer_investment.offer_id).first()
+                        if offer:
+                            metadata = {
+                                **(metadata or {}),
+                                "offer_id": str(offer.id),
+                                "offer_code": offer.code,
+                                "offer_name": offer.name,
+                                "investment_id": str(offer_investment.id),
+                            }
+                            offer_product = f"{offer.name} ({offer.code})"
+                except (AttributeError, TypeError):
+                    metadata = {}
+                    offer_product = None
+                
+                # Normalize datetime (defensive)
+                try:
+                    if op.created_at and op.created_at.tzinfo is not None:
+                        created_at_utc = op.created_at.astimezone(timezone.utc)
+                        iso_str = created_at_utc.isoformat()
+                        if iso_str.endswith('+00:00') or iso_str.endswith('-00:00'):
+                            created_at_str = iso_str[:-6] + 'Z'
+                        elif '+' in iso_str or (iso_str.count('-') >= 3 and len(iso_str) > 19):
+                            if len(iso_str) >= 6 and iso_str[-6] in '+-' and iso_str[-3] == ':':
+                                created_at_str = iso_str[:-6] + 'Z'
+                            else:
+                                created_at_str = iso_str + 'Z'
+                        else:
+                            created_at_str = iso_str + 'Z'
+                    elif op.created_at:
+                        created_at_str = op.created_at.isoformat() + "Z"
                     else:
-                        created_at_str = iso_str + 'Z'
-                else:
-                    created_at_str = iso_str + 'Z'
-            else:
-                created_at_str = op.created_at.isoformat() + "Z"
-            
-            # Map operation type to transaction type for display
-            display_type = "INVESTMENT" if op.type == OperationType.INVEST_EXCLUSIVE else op.type.value
-            
-            # Calculate vault-specific fields
-            amount_display = None
-            direction = None
-            product_label = None
-            
-            if op.type in [OperationType.VAULT_DEPOSIT, OperationType.VAULT_WITHDRAW_EXECUTED, OperationType.VAULT_VESTING_RELEASE]:
-                # Calculate amount_display (always positive)
-                amount_display = str(abs(amount).quantize(Decimal('0.01')))
+                        # Fallback: use current time
+                        created_at_str = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                except (AttributeError, TypeError, ValueError):
+                    # Fallback: use current time
+                    created_at_str = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
                 
-                # Set direction
-                if op.type == OperationType.VAULT_DEPOSIT:
-                    direction = "IN"
-                elif op.type == OperationType.VAULT_WITHDRAW_EXECUTED:
-                    direction = "OUT"
-                elif op.type == OperationType.VAULT_VESTING_RELEASE:
-                    direction = "IN"  # Release adds to available
+                # Map operation type to transaction type for display (defensive)
+                try:
+                    display_type = "INVESTMENT" if op.type == OperationType.INVEST_EXCLUSIVE else (op.type.value if op.type else "UNKNOWN")
+                except (AttributeError, TypeError):
+                    display_type = "UNKNOWN"
                 
-                # Get vault code from metadata or query Vault
-                vault_code = metadata.get("vault_code")
-                if not vault_code and metadata.get("vault_id"):
+                # Calculate vault-specific fields
+                # DEFENSIVE: Always provide safe defaults to avoid serialization errors
+                # This mapping is intentionally defensive to prevent UI errors when new OperationType are added
+                amount_display = None
+                direction = None
+                product_label = None
+                
+                try:
+                    if op.type in [OperationType.VAULT_DEPOSIT, OperationType.VAULT_WITHDRAW_EXECUTED, OperationType.VAULT_VESTING_RELEASE]:
+                        # Calculate amount_display (always positive) - defensive
+                        try:
+                            amount_display = str(abs(amount).quantize(Decimal('0.01')))
+                        except (TypeError, ValueError, AttributeError):
+                            # Fallback: use amount as string if quantize fails
+                            try:
+                                amount_display = str(abs(float(amount)))
+                            except (TypeError, ValueError):
+                                amount_display = "0.00"
+                        
+                        # Set direction based on operation type (defensive mapping)
+                        if op.type == OperationType.VAULT_DEPOSIT:
+                            direction = "IN"
+                        elif op.type == OperationType.VAULT_WITHDRAW_EXECUTED:
+                            direction = "OUT"
+                        elif op.type == OperationType.VAULT_VESTING_RELEASE:
+                            direction = "IN"  # Release adds to available
+                        else:
+                            # Fallback: determine from amount sign
+                            direction = "IN" if amount >= 0 else "OUT"
+                        
+                        # Get vault code from metadata or query Vault (defensive)
+                        vault_code = None
+                        try:
+                            vault_code = metadata.get("vault_code") if metadata else None
+                            if not vault_code and metadata and metadata.get("vault_id"):
+                                try:
+                                    vault_id = UUID(metadata["vault_id"])
+                                    vault = db.query(Vault).filter(Vault.id == vault_id).first()
+                                    if vault:
+                                        vault_code = vault.code
+                                except (ValueError, TypeError, AttributeError):
+                                    pass
+                        except (AttributeError, TypeError):
+                            pass
+                        
+                        # For VAULT_VESTING_RELEASE, vault_code should always be 'AVENIR'
+                        if op.type == OperationType.VAULT_VESTING_RELEASE:
+                            vault_code = vault_code or 'AVENIR'  # Fallback to AVENIR if missing
+                        
+                        # Set product_label with fallback
+                        if vault_code:
+                            product_label = f"COFFRE {vault_code}"
+                        else:
+                            product_label = "COFFRE"
+                except Exception as e:
+                    # Log but don't fail - use safe defaults
+                    logger.warning(
+                        f"Error computing vault fields for operation {op.id}: {e}",
+                        extra={"operation_id": str(op.id), "operation_type": op.type.value if op.type else None}
+                    )
+                    # Keep defaults (None) - schema allows None for these fields
+                
+                # Ensure offer_product has a fallback if missing (for INVEST_EXCLUSIVE)
+                if not offer_product:
                     try:
-                        vault_id = UUID(metadata["vault_id"])
-                        vault = db.query(Vault).filter(Vault.id == vault_id).first()
-                        if vault:
-                            vault_code = vault.code
-                    except (ValueError, TypeError):
-                        pass
+                        if metadata:
+                            offer_name = metadata.get("offer_name") or "-"
+                            offer_code = metadata.get("offer_code") or ""
+                            if offer_code:
+                                offer_product = f"{offer_name} ({offer_code})"
+                            else:
+                                offer_product = offer_name
+                        else:
+                            offer_product = "-"
+                    except (AttributeError, TypeError):
+                        offer_product = "-"
                 
-                # For VAULT_VESTING_RELEASE, vault_code should always be 'AVENIR'
-                if op.type == OperationType.VAULT_VESTING_RELEASE:
-                    vault_code = vault_code or 'AVENIR'  # Fallback to AVENIR if missing
-                
-                if vault_code:
-                    product_label = f"COFFRE {vault_code}"
-                else:
-                    product_label = "COFFRE"
-            
-            result.append(TransactionListItem(
-                transaction_id=None,
-                operation_id=str(op.id),
-                type=display_type,
-                operation_type=op.type.value,
-                status=op.status.value,
-                amount=str(amount),
-                currency=currency_val,
-                created_at=created_at_str,
-                metadata=metadata,
-                offer_product=offer_product,
-                amount_display=amount_display,
-                direction=direction,
-                product_label=product_label,
-            ))
+                try:
+                    result.append(TransactionListItem(
+                        transaction_id=None,
+                        operation_id=str(op.id),
+                        type=display_type,
+                        operation_type=op.type.value,
+                        status=op.status.value,
+                        amount=str(amount),
+                        currency=currency_val,
+                        created_at=created_at_str,
+                        metadata=metadata,
+                        offer_product=offer_product,
+                        amount_display=amount_display,
+                        direction=direction,
+                        product_label=product_label,
+                    ))
+                except Exception as e:
+                    # Log error but continue processing other operations
+                    logger.error(
+                        f"Error serializing operation {op.id}: {e}",
+                        extra={"operation_id": str(op.id), "operation_type": op.type.value if op.type else None, "error": str(e)},
+                        exc_info=True
+                    )
+                    # Skip this operation rather than failing the entire request
+                    continue
+            except Exception as e:
+                # Log error but continue processing other operations
+                logger.error(
+                    f"Error processing operation {op.id}: {e}",
+                    extra={"operation_id": str(op.id), "error": str(e)},
+                    exc_info=True
+                )
+                # Skip this operation rather than failing the entire request
+                continue
+    
+    except Exception as e:
+        # Log critical error but return partial results rather than 500
+        logger.error(
+            f"Critical error in get_transactions for user {user_id}: {e}",
+            extra={"user_id": str(user_id), "currency": currency, "error": str(e)},
+            exc_info=True
+        )
+        # Return whatever we have so far (could be empty list, but valid JSON)
+        # This prevents 500 errors from breaking the frontend
     
     # Sort by created_at DESC and limit
-    result.sort(key=lambda x: x.created_at, reverse=True)
-    return result[:limit]
+    try:
+        result.sort(key=lambda x: x.created_at, reverse=True)
+        return result[:limit]
+    except Exception as e:
+        # If sorting fails, return unsorted (better than 500)
+        logger.warning(
+            f"Error sorting transactions: {e}",
+            extra={"error": str(e)}
+        )
+        return result[:limit]
 
 
 def _infer_movement(transaction_type: TransactionType, status: TransactionStatus) -> WalletMovement | None:
