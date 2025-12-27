@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
+import logging
 
 from app.core.vaults.models import VestingLot, VestingLotStatus
 from app.core.ledger.models import Operation, OperationType, OperationStatus, LedgerEntry, LedgerEntryType
@@ -15,6 +16,8 @@ from app.core.accounts.models import Account, AccountType
 from app.core.accounts.wallet_locks import WalletLock, LockReason, LockStatus
 from app.services.wallet_helpers import ensure_wallet_accounts, get_account_balance
 from app.utils.ledger_validator import validate_double_entry_invariant
+
+logger = logging.getLogger(__name__)
 
 
 class VestingError(Exception):
@@ -281,7 +284,6 @@ def release_avenir_vesting_lots(
                     
                     if wallet_lock:
                         # Log warning for fallback match
-                        logger = logging.getLogger(__name__)
                         logger.warning(
                             f"Wallet lock found via fallback (not operation_id) for lot {lot.id}",
                             extra={
@@ -321,7 +323,6 @@ def release_avenir_vesting_lots(
                     stats['locks_closed_count'] += 1
                 else:
                     # Lock not found - log warning but don't fail
-                    logger = logging.getLogger(__name__)
                     logger.warning(
                         f"Wallet lock not found for lot {lot.id} (source_operation_id={lot.source_operation_id})",
                         extra={
