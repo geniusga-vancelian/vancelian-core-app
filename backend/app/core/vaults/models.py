@@ -164,7 +164,7 @@ class VestingLot(BaseModel):
     release_job_run_at = Column(DateTime(timezone=True), nullable=True)  # Timestamp du dernier run
     
     # Métadonnées extensibles
-    metadata = Column(JSONB, nullable=True)  # JSONB pour règles futures: release schedule, custom rules, etc.
+    lot_metadata = Column(JSONB, nullable=True, name="metadata")  # JSONB pour règles futures: release schedule, custom rules, etc. (DB column name: metadata, Python attr: lot_metadata to avoid SQLAlchemy conflict)
     
     # Relationships
     vault = relationship("Vault", foreign_keys=[vault_id], lazy="select")

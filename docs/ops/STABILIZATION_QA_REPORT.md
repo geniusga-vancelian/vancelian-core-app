@@ -280,9 +280,14 @@ curl -sS "http://localhost:8000/api/v1/transactions?limit=50" \
 3. **Concurrency:** `FOR UPDATE SKIP LOCKED` utilisé, mais si deux releases simultanés, un peut skip
    - **Impact:** Normal, le deuxième run traitera les lots restants
 
-### 🔧 Corrections Triviales (si nécessaire)
+### 🔧 Corrections Triviales Appliquées
 
-Aucune correction nécessaire pour l'instant.
+**Fix SQLAlchemy conflict:**
+- **Problème:** `Attribute name 'metadata' is reserved when using the Declarative API`
+- **Cause:** SQLAlchemy réserve le nom `metadata` pour ses propres besoins
+- **Solution:** Renommer `metadata` en `lot_metadata` dans le modèle Python, mais garder `name="metadata"` pour la colonne DB (comme fait pour `Operation.operation_metadata`)
+- **Fichier:** `backend/app/core/vaults/models.py`
+- **Status:** ✅ Corrigé
 
 ---
 
