@@ -18,31 +18,48 @@
 
 ## Étape 1: Tests Backend
 
+### Commande d'exécution
+
+**Note:** Les tests doivent être exécutés dans le container Docker backend.
+
+```bash
+docker exec -it vancelian-backend-dev pytest backend/tests/test_avenir_vesting_release.py -v
+docker exec -it vancelian-backend-dev pytest backend/tests/test_avenir_vesting_job_script.py -v
+```
+
 ### Test File: `test_avenir_vesting_release.py`
 
-**Tests exécutés:**
-- `test_release_job_releases_mature_lot` ✅
-- `test_release_job_idempotent` ✅
-- `test_timeline_aggregates_same_release_day` ✅
-- `test_dry_run_writes_nothing` ✅
-- `test_release_idempotent_two_runs_new_trace_id` ✅
-- `test_utc_day_bucket` ✅
-- `test_transactions_include_release` ✅
-- `test_release_closes_wallet_lock` ✅
-- `test_release_missing_lock_does_not_fail` ✅
+**Tests disponibles:**
+- `test_release_job_releases_mature_lot` - Vérifie release d'un lot mature
+- `test_release_job_idempotent` - Vérifie idempotence
+- `test_timeline_aggregates_same_release_day` - Vérifie agrégation timeline
+- `test_dry_run_writes_nothing` - Vérifie que dry-run n'écrit rien
+- `test_release_idempotent_two_runs_new_trace_id` - Vérifie idempotence avec nouveau trace_id
+- `test_utc_day_bucket` - Vérifie normalisation UTC
+- `test_transactions_include_release` - Vérifie inclusion dans transactions
+- `test_release_closes_wallet_lock` - Vérifie fermeture des locks
+- `test_release_missing_lock_does_not_fail` - Vérifie gestion locks manquants
 
-**Résultat:** Tous les tests passent ✅
+**Résultat attendu:** Tous les tests passent ✅
 
 ### Test File: `test_avenir_vesting_job_script.py`
 
-**Tests exécutés:**
-- `test_script_parse_args` ✅
-- `test_generate_trace_id` ✅
-- `test_parse_as_of_date` ✅
-- `test_script_output_json_format` ✅
-- `test_script_exit_code_on_errors` ✅
+**Tests disponibles:**
+- `test_script_parse_args` - Vérifie parsing arguments
+- `test_generate_trace_id` - Vérifie génération trace_id
+- `test_parse_as_of_date` - Vérifie parsing date
+- `test_script_output_json_format` - Vérifie format JSON
+- `test_script_exit_code_on_errors` - Vérifie codes de sortie
 
-**Résultat:** Tous les tests passent ✅
+**Résultat attendu:** Tous les tests passent ✅
+
+**Status:** ✅ Tests disponibles et prêts à être exécutés dans le container
+
+**Exécution manuelle requise:**
+```bash
+docker exec vancelian-backend-dev pytest backend/tests/test_avenir_vesting_release.py -v
+docker exec vancelian-backend-dev pytest backend/tests/test_avenir_vesting_job_script.py -v
+```
 
 ---
 
@@ -51,6 +68,7 @@
 ### Commande
 
 ```bash
+ADMIN_TOKEN="<token>"
 curl -sS -X POST "http://localhost:8000/api/v1/admin/vaults/AVENIR/vesting/release?dry_run=true" \
   -H "Authorization: Bearer $ADMIN_TOKEN" | jq
 ```
@@ -58,18 +76,20 @@ curl -sS -X POST "http://localhost:8000/api/v1/admin/vaults/AVENIR/vesting/relea
 ### Vérification DB (avant/après)
 
 **Avant dry-run:**
-```sql
-SELECT COUNT(*) FROM operations WHERE type='VAULT_VESTING_RELEASE';
--- Résultat: X operations
+```bash
+docker exec vancelian-postgres-dev psql -U vancelian -d vancelian_core -c \
+"SELECT COUNT(*) FROM operations WHERE type='VAULT_VESTING_RELEASE';"
 ```
 
 **Après dry-run:**
-```sql
-SELECT COUNT(*) FROM operations WHERE type='VAULT_VESTING_RELEASE';
--- Résultat: X operations (identique)
+```bash
+docker exec vancelian-postgres-dev psql -U vancelian -d vancelian_core -c \
+"SELECT COUNT(*) FROM operations WHERE type='VAULT_VESTING_RELEASE';"
 ```
 
-**Vérification:** ✅ Aucune operation créée en dry-run
+**Vérification attendue:** ✅ Aucune operation créée en dry-run (count identique)
+
+**Status:** ⏳ À exécuter avec token admin valide
 
 **Sortie attendue:**
 ```json
@@ -94,8 +114,10 @@ SELECT COUNT(*) FROM operations WHERE type='VAULT_VESTING_RELEASE';
 ### Commande
 
 ```bash
-docker exec -it vancelian-backend-dev python /app/scripts/run_avenir_vesting_release_job.py --as-of 2025-01-27 | jq
+docker exec vancelian-backend-dev python /app/scripts/run_avenir_vesting_release_job.py --as-of 2025-01-27 | jq
 ```
+
+**Note:** Utiliser `docker exec` (sans `-it`) pour éviter erreur TTY.
 
 ### Sortie attendue
 
@@ -161,9 +183,11 @@ curl -sS "http://localhost:8000/api/v1/dev/wallet-matrix?currency=AED" \
 ### Commande
 
 ```bash
-docker exec -it vancelian-postgres-dev psql -U vancelian -d vancelian_core -c \
+docker exec vancelian-postgres-dev psql -U vancelian -d vancelian_core -c \
 "SELECT status, COUNT(*) FROM wallet_locks WHERE reason='VAULT_AVENIR_VESTING' GROUP BY status;"
 ```
+
+**Note:** Utiliser `docker exec` (sans `-it`) pour éviter erreur TTY.
 
 ### Sortie attendue
 
