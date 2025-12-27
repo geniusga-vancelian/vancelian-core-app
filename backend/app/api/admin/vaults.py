@@ -428,6 +428,8 @@ async def release_avenir_vesting(
             skipped_count=summary['skipped_count'],
             errors_count=summary['errors_count'],
             errors=summary['errors'],
+            locks_closed_count=summary.get('locks_closed_count', 0),
+            locks_missing_count=summary.get('locks_missing_count', 0),
             trace_id=summary['trace_id'],
             as_of_date=summary['as_of_date'],
         )

@@ -272,6 +272,8 @@ class VestingReleaseSummaryResponse(BaseModel):
     skipped_count: int = Field(..., description="Number of lots skipped")
     errors_count: int = Field(..., description="Number of errors encountered")
     errors: List[str] = Field(default_factory=list, description="List of error messages")
+    locks_closed_count: int = Field(..., description="Number of wallet_locks closed")
+    locks_missing_count: int = Field(..., description="Number of lots with missing wallet_locks")
     trace_id: str = Field(..., description="Trace ID used for this run")
     as_of_date: str = Field(..., description="Date used for maturity check (ISO format)")
 

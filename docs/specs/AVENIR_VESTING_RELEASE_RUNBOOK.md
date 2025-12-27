@@ -235,6 +235,91 @@ GROUP BY le.entry_type, a.account_type;
 
 ---
 
+## Wallet Locks Closure
+
+### Comportement
+
+Lors du release d'un lot AVENIR, le système ferme automatiquement les `wallet_locks` correspondants:
+
+1. **Recherche du lock:**
+   - **Priorité 1:** Via `operation_id == source_operation_id` (lien direct)
+   - **Priorité 2 (fallback):** Si introuvable, recherche par:
+     - `user_id`, `currency`, `reason=VAULT_AVENIR_VESTING`, `status=ACTIVE`
+     - `reference_id == vault_id`
+     - `amount` proche de `lot.amount` (tolérance ±0.01)
+     - `created_at` même jour que `deposit_day`
+
+2. **Fermeture:**
+   - Si `wallet_lock.amount <= release_amount`: Full release (`status=RELEASED`)
+   - Sinon: Partial release (crée nouveau lock pour remaining)
+
+3. **Si lock introuvable:**
+   - Logger warning avec `trace_id`
+   - **NE PAS** échouer le release (ledger prime)
+   - Incrémenter `locks_missing_count` dans summary
+
+### Vérification
+
+**Dans le summary:**
+```json
+{
+  "locks_closed_count": 3,
+  "locks_missing_count": 0
+}
+```
+
+**En DB:**
+```sql
+-- Vérifier locks fermés pour une date
+SELECT 
+    COUNT(*) as released_locks_count
+FROM wallet_locks
+WHERE reason = 'VAULT_AVENIR_VESTING'
+  AND status = 'RELEASED'
+  AND DATE(released_at) = '2025-01-27';
+```
+
+**Wallet Matrix:**
+- Après release, `AVENIR locked` doit diminuer
+- Si `locks_missing_count > 0`, la wallet-matrix peut encore afficher locked (incohérence)
+
+### Debug si Mismatch
+
+**Problème:** `locks_missing_count > 0`
+
+**Causes possibles:**
+1. Lock créé sans `operation_id` (ancien code)
+2. `source_operation_id` du lot ne correspond pas à `operation_id` du lock
+3. Lock déjà fermé manuellement
+
+**Solution:**
+1. Vérifier le lock en DB:
+```sql
+SELECT * FROM wallet_locks
+WHERE user_id = '<user_id>'
+  AND reason = 'VAULT_AVENIR_VESTING'
+  AND status = 'ACTIVE'
+  AND reference_id = '<vault_id>';
+```
+
+2. Vérifier le lot:
+```sql
+SELECT source_operation_id, deposit_day, amount
+FROM vault_vesting_lots
+WHERE id = '<lot_id>';
+```
+
+3. Si lock existe mais non trouvé:
+   - Vérifier que `operation_id` du lock = `source_operation_id` du lot
+   - Si différent, fermer manuellement le lock:
+```sql
+UPDATE wallet_locks
+SET status = 'RELEASED', released_at = NOW()
+WHERE id = '<lock_id>';
+```
+
+---
+
 ## Troubleshooting
 
 ### Problème: `executed_count = 0` mais `matured_found > 0`

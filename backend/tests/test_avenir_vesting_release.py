@@ -299,6 +299,203 @@ def test_timeline_aggregates_same_release_day(db_session, test_user, avenir_vaul
     assert timeline_items[0].total_amount == amount1 + amount2
 
 
+def test_release_closes_wallet_lock(db_session, test_user, avenir_vault):
+    """
+    Test that release closes the corresponding wallet_lock
+    """
+    user_id = test_user.id
+    currency = "AED"
+    amount = Decimal("10000.00")
+    
+    # Ensure wallet accounts exist
+    wallet_accounts = ensure_wallet_accounts(db_session, user_id, currency)
+    locked_account_id = wallet_accounts[AccountType.WALLET_LOCKED.value]
+    available_account_id = wallet_accounts[AccountType.WALLET_AVAILABLE.value]
+    
+    # Create deposit operation and wallet_lock (simulate AVENIR deposit)
+    operation_deposit = Operation(
+        transaction_id=None,
+        type=OperationType.VAULT_DEPOSIT,
+        status=OperationStatus.COMPLETED,
+        idempotency_key=None,
+        operation_metadata={'vault_code': 'AVENIR', 'currency': currency},
+    )
+    db_session.add(operation_deposit)
+    db_session.flush()
+    
+    # Create wallet_lock (as done in vault_service.py)
+    wallet_lock = WalletLock(
+        user_id=user_id,
+        currency=currency,
+        amount=amount,
+        reason=LockReason.VAULT_AVENIR_VESTING.value,
+        reference_type='VAULT',
+        reference_id=avenir_vault.id,
+        status=LockStatus.ACTIVE.value,
+        operation_id=operation_deposit.id,  # Link to deposit operation
+    )
+    db_session.add(wallet_lock)
+    
+    # Create ledger entries for locked balance
+    credit_locked = LedgerEntry(
+        operation_id=operation_deposit.id,
+        account_id=locked_account_id,
+        amount=amount,
+        currency=currency,
+        entry_type=LedgerEntryType.CREDIT,
+    )
+    debit_available = LedgerEntry(
+        operation_id=operation_deposit.id,
+        account_id=available_account_id,
+        amount=-amount,
+        currency=currency,
+        entry_type=LedgerEntryType.DEBIT,
+    )
+    db_session.add(credit_locked)
+    db_session.add(debit_available)
+    db_session.commit()
+    
+    # Create mature vesting lot
+    deposit_day = date.today() - timedelta(days=366)
+    release_day = deposit_day + timedelta(days=365)
+    
+    vesting_lot = VestingLot(
+        vault_id=avenir_vault.id,
+        vault_code='AVENIR',
+        user_id=user_id,
+        currency=currency,
+        deposit_day=deposit_day,
+        release_day=release_day,
+        amount=amount,
+        released_amount=Decimal('0.00'),
+        status=VestingLotStatus.VESTED.value,
+        source_operation_id=operation_deposit.id,  # Link to deposit operation
+    )
+    db_session.add(vesting_lot)
+    db_session.commit()
+    
+    # Verify wallet_lock is ACTIVE before release
+    db_session.refresh(wallet_lock)
+    assert wallet_lock.status == LockStatus.ACTIVE.value
+    
+    # Count active locks before
+    active_locks_before = db_session.query(WalletLock).filter(
+        WalletLock.user_id == user_id,
+        WalletLock.reason == LockReason.VAULT_AVENIR_VESTING.value,
+        WalletLock.status == LockStatus.ACTIVE.value,
+    ).count()
+    assert active_locks_before == 1
+    
+    # Run release
+    summary = release_avenir_vesting_lots(
+        db=db_session,
+        as_of_date=date.today(),
+        currency=currency,
+        dry_run=False,
+    )
+    
+    # Verify summary includes locks_closed_count
+    assert 'locks_closed_count' in summary
+    assert summary['locks_closed_count'] == 1
+    assert summary.get('locks_missing_count', 0) == 0
+    
+    # Verify wallet_lock is RELEASED
+    db_session.refresh(wallet_lock)
+    assert wallet_lock.status == LockStatus.RELEASED.value
+    assert wallet_lock.released_at is not None
+    
+    # Verify active locks count decreased
+    active_locks_after = db_session.query(WalletLock).filter(
+        WalletLock.user_id == user_id,
+        WalletLock.reason == LockReason.VAULT_AVENIR_VESTING.value,
+        WalletLock.status == LockStatus.ACTIVE.value,
+    ).count()
+    assert active_locks_after == 0
+
+
+def test_release_missing_lock_does_not_fail(db_session, test_user, avenir_vault):
+    """
+    Test that release continues even if wallet_lock is missing
+    """
+    user_id = test_user.id
+    currency = "AED"
+    amount = Decimal("5000.00")
+    
+    # Ensure wallet accounts exist
+    wallet_accounts = ensure_wallet_accounts(db_session, user_id, currency)
+    locked_account_id = wallet_accounts[AccountType.WALLET_LOCKED.value]
+    available_account_id = wallet_accounts[AccountType.WALLET_AVAILABLE.value]
+    
+    # Create deposit operation WITHOUT wallet_lock (simulate missing lock)
+    operation_deposit = Operation(
+        transaction_id=None,
+        type=OperationType.VAULT_DEPOSIT,
+        status=OperationStatus.COMPLETED,
+        idempotency_key=None,
+        operation_metadata={'vault_code': 'AVENIR', 'currency': currency},
+    )
+    db_session.add(operation_deposit)
+    db_session.flush()
+    
+    # Create ledger entries for locked balance (but NO wallet_lock)
+    credit_locked = LedgerEntry(
+        operation_id=operation_deposit.id,
+        account_id=locked_account_id,
+        amount=amount,
+        currency=currency,
+        entry_type=LedgerEntryType.CREDIT,
+    )
+    debit_available = LedgerEntry(
+        operation_id=operation_deposit.id,
+        account_id=available_account_id,
+        amount=-amount,
+        currency=currency,
+        entry_type=LedgerEntryType.DEBIT,
+    )
+    db_session.add(credit_locked)
+    db_session.add(debit_available)
+    db_session.commit()
+    
+    # Create mature vesting lot
+    deposit_day = date.today() - timedelta(days=366)
+    release_day = deposit_day + timedelta(days=365)
+    
+    vesting_lot = VestingLot(
+        vault_id=avenir_vault.id,
+        vault_code='AVENIR',
+        user_id=user_id,
+        currency=currency,
+        deposit_day=deposit_day,
+        release_day=release_day,
+        amount=amount,
+        released_amount=Decimal('0.00'),
+        status=VestingLotStatus.VESTED.value,
+        source_operation_id=operation_deposit.id,
+    )
+    db_session.add(vesting_lot)
+    db_session.commit()
+    
+    # Run release (should succeed even without wallet_lock)
+    summary = release_avenir_vesting_lots(
+        db=db_session,
+        as_of_date=date.today(),
+        currency=currency,
+        dry_run=False,
+    )
+    
+    # Verify release succeeded
+    assert summary['executed_count'] == 1
+    assert summary['errors_count'] == 0
+    
+    # Verify locks_missing_count is incremented
+    assert summary.get('locks_missing_count', 0) == 1
+    assert summary.get('locks_closed_count', 0) == 0
+    
+    # Verify lot is still released (ledger prime)
+    db_session.refresh(vesting_lot)
+    assert vesting_lot.status == VestingLotStatus.RELEASED.value
+
+
 def test_dry_run_writes_nothing(db_session, test_user, avenir_vault):
     """
     Test that dry_run=True does not create any Operation, LedgerEntry, or modify lots

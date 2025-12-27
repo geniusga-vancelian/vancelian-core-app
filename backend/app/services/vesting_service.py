@@ -119,6 +119,8 @@ def release_avenir_vesting_lots(
         'skipped_count': 0,
         'errors_count': 0,
         'errors': [],
+        'locks_closed_count': 0,
+        'locks_missing_count': 0,
         'trace_id': trace_id,
         'as_of_date': as_of_date.isoformat(),
     }
@@ -251,17 +253,53 @@ def release_avenir_vesting_lots(
                     lot.status = VestingLotStatus.RELEASED.value
                 
                 # Update wallet_lock if exists (for Wallet Matrix coherence)
+                # Priority 1: Direct link via operation_id
                 wallet_lock = db.query(WalletLock).filter(
                     WalletLock.operation_id == lot.source_operation_id,
                     WalletLock.reason == LockReason.VAULT_AVENIR_VESTING.value,
                     WalletLock.status == LockStatus.ACTIVE.value,
-                ).first()
+                ).with_for_update(skip_locked=True).first()
+                
+                # Priority 2: Fallback if operation_id link missing
+                if not wallet_lock:
+                    # Try to find by user_id, vault_id, reason, status, amount match
+                    from sqlalchemy import and_, func
+                    wallet_lock = db.query(WalletLock).filter(
+                        and_(
+                            WalletLock.user_id == lot.user_id,
+                            WalletLock.currency == currency,
+                            WalletLock.reason == LockReason.VAULT_AVENIR_VESTING.value,
+                            WalletLock.reference_type == 'VAULT',
+                            WalletLock.reference_id == lot.vault_id,
+                            WalletLock.status == LockStatus.ACTIVE.value,
+                            # Amount match (within tolerance)
+                            func.abs(WalletLock.amount - lot.amount) <= Decimal('0.01'),
+                            # Created on same day as deposit
+                            func.date(WalletLock.created_at) == lot.deposit_day,
+                        )
+                    ).order_by(WalletLock.created_at.asc()).with_for_update(skip_locked=True).first()
+                    
+                    if wallet_lock:
+                        # Log warning for fallback match
+                        logger = logging.getLogger(__name__)
+                        logger.warning(
+                            f"Wallet lock found via fallback (not operation_id) for lot {lot.id}",
+                            extra={
+                                "lot_id": str(lot.id),
+                                "source_operation_id": str(lot.source_operation_id),
+                                "wallet_lock_id": str(wallet_lock.id),
+                                "wallet_lock_operation_id": str(wallet_lock.operation_id),
+                                "trace_id": trace_id,
+                            }
+                        )
                 
                 if wallet_lock:
                     if wallet_lock.amount <= release_amount:
                         # Full release
                         wallet_lock.status = LockStatus.RELEASED.value
                         wallet_lock.released_at = datetime.now(timezone.utc)
+                        # Optionally link to release operation for traceability
+                        # wallet_lock.operation_id = operation.id  # Could update, but keep original for audit
                     else:
                         # Partial release: create new lock for remaining
                         remaining_lock_amount = wallet_lock.amount - release_amount
@@ -279,6 +317,24 @@ def release_avenir_vesting_lots(
                             operation_id=None,  # No source operation for partial lock
                         )
                         db.add(new_lock)
+                    
+                    stats['locks_closed_count'] += 1
+                else:
+                    # Lock not found - log warning but don't fail
+                    logger = logging.getLogger(__name__)
+                    logger.warning(
+                        f"Wallet lock not found for lot {lot.id} (source_operation_id={lot.source_operation_id})",
+                        extra={
+                            "lot_id": str(lot.id),
+                            "source_operation_id": str(lot.source_operation_id),
+                            "user_id": str(lot.user_id),
+                            "vault_id": str(lot.vault_id),
+                            "amount": str(lot.amount),
+                            "deposit_day": lot.deposit_day.isoformat(),
+                            "trace_id": trace_id,
+                        }
+                    )
+                    stats['locks_missing_count'] += 1
                 
                 # Commit transaction
                 db.commit()
