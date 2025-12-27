@@ -263,7 +263,7 @@ def release_avenir_vesting_lots(
                 # Priority 2: Fallback if operation_id link missing
                 if not wallet_lock:
                     # Try to find by user_id, vault_id, reason, status, amount match
-                    from sqlalchemy import and_, func
+                    # Note: and_ and func are already imported at module level
                     wallet_lock = db.query(WalletLock).filter(
                         and_(
                             WalletLock.user_id == lot.user_id,

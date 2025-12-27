@@ -81,12 +81,16 @@ def test_release_job_releases_mature_lot(db_session, test_user, avenir_vault):
     db_session.add(vesting_lot)
     db_session.commit()
     
+    # Refresh to ensure lot is visible in new transaction
+    db_session.refresh(vesting_lot)
+    
     # Get balances before release
     balances_before = get_wallet_balances(db_session, user_id, currency)
     available_before = balances_before['available_balance']
     locked_before = balances_before['locked_balance']
     
     # Run release
+    # Note: Use the same session to ensure transaction visibility
     summary = release_avenir_vesting_lots(
         db=db_session,
         as_of_date=date.today(),
